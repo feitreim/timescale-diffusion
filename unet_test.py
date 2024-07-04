@@ -39,6 +39,7 @@ class ClassificationUNet(nn.Module):
     def forward(self, x):
         x = self.model(x)
         x = self.ff(x.flatten(1))
+        x = nn.functional.softmax(x)
         return x
 
 model = ClassificationUNet().to(device)
