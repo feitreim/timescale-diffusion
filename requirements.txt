@@ -1,0 +1,26 @@
+# Standard torch libraries
+torch
+torchvision
+torchmetrics
+pytorch-lightning
+einops
+# Libraries for metric calculation
+numpy
+scikit-learn
+# Libraries for video-based io
+av
+imageio
+pims
+sk-video
+# Logging libraries
+wandb 
+pip-system-certs
+# Misc
+typing
+argparse
+toml
+tqdm
+matplotlib
+pandas
+seaborn
+ruff
