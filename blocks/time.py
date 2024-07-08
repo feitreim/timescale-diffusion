@@ -12,6 +12,7 @@ class TimeEmbedding1D(nn.Module):
     """
 
     def __init__(self, t_dim, e_dim):
+        super().__init__()
         block = []
         block.append(nn.Linear(t_dim, e_dim, bias=True))
         block.append(nn.SiLU())

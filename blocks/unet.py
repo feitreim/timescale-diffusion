@@ -46,11 +46,7 @@ class UNet(nn.Module):
             for i, h in enumerate(dims[:-1])
         ]
         up = [
-            nn.Sequential(
-                nn.Conv2d(h * 2, h, kernel_size, padding=padding),
-                activation,
-                get_layer(up_layers[i], h, h // 2, kernel_size, padding, e_dims),
-            )
+            get_layer(up_layers[i], h * 2, h // 2, kernel_size, padding, e_dims)
             for i, h in enumerate(reversed(dims[:-1]))
         ]
 
@@ -68,7 +64,7 @@ class UNet(nn.Module):
             states.append(x := l(x, t))
         x = self.bottom_layer(x, t)
         for i, l in enumerate(self.up_layers):
-            x = l(torch.cat([x, states[self.n_ups - i]], dim=1))
+            x = l(torch.cat([x, states[self.n_ups - i]], dim=1), t)
         x = self.out_conv(x)
         return x
 

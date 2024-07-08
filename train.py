@@ -36,6 +36,8 @@ num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
 # Model(s)
 # Just UNET for now
 model_unopt = UNet(**config["model"])
+summary(model_unopt, input_size=((batch_size, 3, 256, 256), (batch_size, 7)))
+model_unopt = model_unopt.to(device)
 model = torch.compile(model_unopt, **config["compile"])
 
 # optim
@@ -45,7 +47,7 @@ optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
 dataset = DALIDataset(**config["data"])
 
 for batch in tqdm(dataset):
-    x, y, t = unpack(batch)
+    x, y, t = unpack(batch, device)
     x_hat = model(x, t)
 
     loss = torch.pow((y - x_hat), 2.0).mean()

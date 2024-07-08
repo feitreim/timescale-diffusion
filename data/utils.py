@@ -48,10 +48,10 @@ def convert_timestamp_to_periodic_vec(t):
     pass
 
 
-def unpack(batch) -> Tuple[Tensor, Tensor, Tensor]:
+def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:
     x, t = batch
-    x = x.squeeze()
-    t = t.squeeze()
+    x = x.squeeze().to(device)
+    t = t.squeeze().to(device)
     y = x[:, 1]
     x = x[:, 0]
     t = t[:, 0]

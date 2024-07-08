@@ -13,6 +13,9 @@ kernel_size = 3
 padding = 1
 e_dims = 64
 
+[compile]
+fullgraph = true
+
 [data]
 video_file_paths = [
     "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210906_160000geiranger.mp4",
