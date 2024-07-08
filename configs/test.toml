@@ -14,7 +14,34 @@ padding = 1
 e_dims = 64
 
 [data]
-video_file_paths = []
+video_file_paths = [
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210906_160000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210906_200000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210907_000001geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210907_040000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210907_080000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210913_200003geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210914_000001geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210914_040000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210914_120000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210914_160000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210914_200000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210915_000001geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210915_080000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210915_160000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210915_200000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210916_040000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210916_080000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210916_120000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210916_200001geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210917_000000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210917_040000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210917_120000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210917_160001geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210918_040000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210918_080000geiranger.mp4",
+    "/cluster/research-groups/wehrwein/webcam/geiranger/256x256_resized/210918_120000geiranger.mp4",
+]
 sequence_length = 2
 batch_size = 32
 num_threads = 8
