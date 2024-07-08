@@ -40,14 +40,14 @@ class ClassificationUNet(nn.Module):
         super().__init__()
         self.model = UNet(
             depth=4,
-            down_layers=["ResDown", 'AttnDown', 'AttnDown'],
-            up_layers=['AttnUp', 'AttnUp', 'ResUp'],
+            down_layers=["ResDown", "AttnDown", "AttnDown"],
+            up_layers=["AttnUp", "AttnUp", "ResUp"],
             in_dims=3,
             h_dims=512,
             out_dims=3,
             kernel_size=3,
             padding=1,
-            e_dims=64
+            e_dims=64,
         )
         self.ff = nn.Linear(10 * 32 * 32, 10)
 

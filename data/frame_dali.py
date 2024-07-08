@@ -91,7 +91,9 @@ class DALIDataset(torch.utils.data.IterableDataset):
             num_threads=num_threads,
             device_id=shard_id,
         )
-        self.pipeline = pydali.DALIGenericIterator(pipe, output_map=["frames", "labels"], reader_name=self.name)
+        self.pipeline = pydali.DALIGenericIterator(
+            pipe, output_map=["frames", "labels"], reader_name=self.name
+        )
         self.periodic
 
     def __iter__(self):
@@ -101,7 +103,9 @@ class DALIDataset(torch.utils.data.IterableDataset):
                 data[1][0]["labels"],
             )
 
-            timestamps_list = [convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels]
+            timestamps_list = [
+                convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels
+            ]
             timestamps = torch.stack(timestamps_list)
 
             yield frames, timestamps
@@ -175,12 +179,16 @@ class DaliImage(pl.LightningDataModule):
                 frames = out[0]["frames"]
 
                 if self.periodic:
-                    label_list = [convert_timestamp_to_periodic(label) for label in labels]
+                    label_list = [
+                        convert_timestamp_to_periodic(label) for label in labels
+                    ]
                     labels = torch.stack(label_list)
 
                 return frames, labels
 
-        self.loader = LightningWrapper(self.periodic, pipe, output_map=["frames", "labels"], reader_name=self.name)
+        self.loader = LightningWrapper(
+            self.periodic, pipe, output_map=["frames", "labels"], reader_name=self.name
+        )
 
     def train_dataloader(self):
         return self.loader

@@ -29,20 +29,20 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.set_float32_matmul_precision("high")
 
 # Hyperparameters
-batch_size = config['data']['batch_size']
-learning_rate = config['hp']['lr'] if 'lr' in config['hp'] else .001
-num_epochs = config['hp']['num_epochs'] if 'num_epochs' in config['hp'] else 5
+batch_size = config["data"]["batch_size"]
+learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
+num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
 
 # Model(s)
 # Just UNET for now
-model_unopt = UNet(**config['model'])
-model = torch.compile(model_unopt, **config['compile'])
+model_unopt = UNet(**config["model"])
+model = torch.compile(model_unopt, **config["compile"])
 
 # optim
 optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
 
 # dataset
-dataset = DALIDataset(**config['data'])
+dataset = DALIDataset(**config["data"])
 
 for batch in tqdm(dataset):
     x, y, t = unpack(batch)

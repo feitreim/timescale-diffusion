@@ -47,6 +47,7 @@ def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
 def convert_timestamp_to_periodic_vec(t):
     pass
 
+
 def unpack(batch) -> Tuple[Tensor, Tensor, Tensor]:
     x, t = batch
     x = x.squeeze()

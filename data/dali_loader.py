@@ -128,15 +128,19 @@ class DALIDataset(torch.utils.data.IterableDataset):
                 data[1][0]["frame_number"],
             )
 
-            #frames = rearrange(frames, "B S C H W -> (B S) C H W")
-            timestamps = torch.empty((frames.shape[0], frames.shape[1], 7), dtype=torch.float32)
+            # frames = rearrange(frames, "B S C H W -> (B S) C H W")
+            timestamps = torch.empty(
+                (frames.shape[0], frames.shape[1], 7), dtype=torch.float32
+            )
             for idx, l in enumerate(labels):
                 label = l[0]
                 base_timestamp = self.video_timestamps[label]
                 timestamp_with_frame = base_timestamp + frame_number[idx]
                 for i, off in enumerate(self.offsets):
                     timestamp_w_offset = timestamp_with_frame + off
-                    timestamps[idx, i] = convert_timestamp_to_periodic(timestamp_w_offset, fps=30).squeeze()
+                    timestamps[idx, i] = convert_timestamp_to_periodic(
+                        timestamp_w_offset, fps=30
+                    ).squeeze()
 
             yield frames, timestamps
 
@@ -156,7 +160,9 @@ class DALIDataset(torch.utils.data.IterableDataset):
         for path in video_file_paths:
             # Isolate date/time strings
             filename = path.split("/")[-1]
-            filename = filename.casefold().strip("adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/")
+            filename = filename.casefold().strip(
+                "adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/"
+            )
             yearmonthday = filename.split("_")[0]
             hourminsec = filename.split("_")[-1]
 
