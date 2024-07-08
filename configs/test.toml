@@ -1,0 +1,23 @@
+[hp]
+lr = 1e-3
+num_epochs = 5
+
+[model]
+depth = 4
+down_layers = ["ResDown", 'AttnDown', 'AttnDown']
+up_layers = ['AttnUp', 'AttnUp', 'ResUp']
+in_dims = 3
+h_dims = 512
+out_dims = 3
+kernel_size = 3
+padding = 1
+e_dims = 64
+
+[data]
+video_file_paths = []
+sequence_length = 2
+batch_size = 32
+num_threads = 8
+output_size = [256, 256]
+buffer_size = 5000
+mf_distance = 1

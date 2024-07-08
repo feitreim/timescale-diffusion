@@ -9,7 +9,7 @@ import nvidia.dali.types as types
 import nvidia.dali.plugin.pytorch as pydali
 from torch.utils.data import DataLoader
 from einops import rearrange
-from datasets.utils import convert_timestamp_to_periodic
+from data.utils import convert_timestamp_to_periodic
 
 """
 Dali pipeline, allows gpu-accelerated dataloading
@@ -117,9 +117,7 @@ class DALIDataset(torch.utils.data.IterableDataset):
         )
         self.video_timestamps = []
         self.compute_frame_timestamps(video_file_paths)
-
-        hw = sequence_length // 2
-        self.offsets = [(i - hw) * mf_distance for i in range(sequence_length)]
+        self.offsets = [i * mf_distance for i in range(sequence_length)]
         self.sq_len = sequence_length
 
     def __iter__(self):
@@ -130,15 +128,15 @@ class DALIDataset(torch.utils.data.IterableDataset):
                 data[1][0]["frame_number"],
             )
 
-            frames = rearrange(frames, "B S C H W -> (B S) C H W")
-            timestamps = torch.empty((frames.shape[0], 1, 7), dtype=torch.float32)
+            #frames = rearrange(frames, "B S C H W -> (B S) C H W")
+            timestamps = torch.empty((frames.shape[0], frames.shape[1], 7), dtype=torch.float32)
             for idx, l in enumerate(labels):
                 label = l[0]
                 base_timestamp = self.video_timestamps[label]
                 timestamp_with_frame = base_timestamp + frame_number[idx]
                 for i, off in enumerate(self.offsets):
                     timestamp_w_offset = timestamp_with_frame + off
-                    timestamps[(idx * self.sq_len) + i] = convert_timestamp_to_periodic(timestamp_w_offset, fps=30)
+                    timestamps[idx, i] = convert_timestamp_to_periodic(timestamp_w_offset, fps=30).squeeze()
 
             yield frames, timestamps
 

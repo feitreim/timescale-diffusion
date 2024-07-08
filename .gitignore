@@ -18,7 +18,6 @@ timescale-autoencoder/
 Timescale-Autoencoder/
 condor_logs/
 TEMP_trained_models/
-data/*
 training/configs/*
 training/experiments/*
 

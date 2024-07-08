@@ -13,8 +13,8 @@ class UNet(nn.Module):
     UNet Diffusion Block
     Args:
         -- depth: how many layers
-        -- down_layers: what kind of down layer at each step
-        -- up_layers: what kind of up layer at each step
+        -- down_layers: what kind of down layer at each step, 1 less than depth
+        -- up_layers: what kind of up layer at each step, 1 less than depth
         -- in_dims: input channel dimension
         -- h_dims: max hidden dims
         -- out_dims: output channel dimension
