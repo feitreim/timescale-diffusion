@@ -2,23 +2,26 @@ from toml.decoder import TomlDecoder
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from torch.utils.data import DataLoader
 from torch import Tensor
-from typing import List, Tuple
 from torchvision import datasets, transforms
 import torchvision.transforms.v2 as v2
-from torch.utils.data import DataLoader
-from tqdm import tqdm
 from torchinfo import summary
+from typing import List, Tuple
+from tqdm import tqdm
 import toml
 import argparse
+import wandb
 
 from blocks.unet import UNet
 from data.dali_loader import DALIDataset
 from data.utils import unpack
+from losses.reconstructionLosses import MixReconstructionLoss
 
 # Args
 parser = argparse.ArgumentParser(description="train the timescale diffusion model")
 parser.add_argument("config_file", help="Path to the configuration file")
+parser.add_argument("--name", help="run name.")
 args = parser.parse_args()
 
 # Load config
@@ -32,6 +35,7 @@ torch.set_float32_matmul_precision("high")
 batch_size = config["data"]["batch_size"]
 learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
 num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
+logging_rate = config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
 
 # Model(s)
 # Just UNET for now
@@ -43,15 +47,30 @@ model = torch.compile(model_unopt, **config["compile"])
 # optim
 optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
 
+# loss
+ssim_loss = MixReconstructionLoss()
+
 # dataset
 dataset = DALIDataset(**config["data"])
 
-for batch in tqdm(dataset):
+# wandb
+wandb.init(project="timescale-diffusion", name=args.name)
+
+for batch_idx, batch in tqdm(enumerate(dataset)):
     x, y, t = unpack(batch, device)
     x_hat = model(x, t)
 
-    loss = torch.pow((y - x_hat), 2.0).mean()
+    loss = ssim_loss(x_hat, y)
 
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
+    if batch_idx % logging_rate == 0:
+        wandb.log({"train/loss": loss.item()})
+
+    if batch_idx % (logging_rate**2) == 0:
+        caption = "left: input, middle: prediction, right: target"
+        mosaic = torch.cat([x[:4], x_hat[:4], y[:4]], dim=-1)
+        wandb.log(
+            {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
+        )
