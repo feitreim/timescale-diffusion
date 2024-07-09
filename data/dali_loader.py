@@ -9,7 +9,7 @@ import nvidia.dali.types as types
 import nvidia.dali.plugin.pytorch as pydali
 from torch.utils.data import DataLoader
 from einops import rearrange
-from data.utils import convert_timestamp_to_periodic
+from utils import convert_timestamp_to_periodic
 
 """
 Dali pipeline, allows gpu-accelerated dataloading

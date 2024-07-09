@@ -9,7 +9,7 @@ import nvidia.dali.plugin.pytorch as pydali
 from torch.utils.data import DataLoader
 from einops import rearrange
 
-from datasets.utils import convert_timestamp_to_periodic
+from utils import convert_timestamp_to_periodic
 from datasets.frame_random_index import FrameRandomIndexModule
 
 

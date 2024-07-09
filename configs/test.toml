@@ -50,4 +50,4 @@ batch_size = 32
 num_threads = 8
 output_size = [256, 256]
 buffer_size = 5000
-mf_distance = 1
+mf_distance = 30

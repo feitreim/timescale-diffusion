@@ -1,4 +1,3 @@
-from toml.decoder import TomlDecoder
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -12,10 +11,11 @@ from tqdm import tqdm
 import toml
 import argparse
 import wandb
+import pathlib
 
 from blocks.unet import UNet
 from data.dali_loader import DALIDataset
-from data.utils import unpack
+from utils import unpack
 from losses.reconstructionLosses import MixReconstructionLoss
 
 # Args
@@ -55,6 +55,12 @@ dataset = DALIDataset(**config["data"])
 
 # wandb
 wandb.init(project="timescale-diffusion", name=args.name)
+wandb.Artifact(args.name, type="model")
+artifact.add_file(local_path=args.config_file, name="model_config", is_tmp=True)
+checkpoint_path = pathlib.path(f"./.checkpoints") / f"{args.name}"
+checkpoint_path.mkdir(parents=True, exist_ok=True)
+checkpoint_path = f"{str(checkpoint_path.resolve())}/model_state_dict.pth"
+save_model(model, checkpoint_path)
 
 for batch_idx, batch in tqdm(enumerate(dataset)):
     x, y, t = unpack(batch, device)
@@ -74,3 +80,9 @@ for batch_idx, batch in tqdm(enumerate(dataset)):
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
+
+
+def save_model(model, path):
+    torch.save(model.state_dict(), path)
+    artifact.add_file(local_path=path, name="model_state_dict", is_tmp=True)
+    wandb.log_artifact(artifact)
