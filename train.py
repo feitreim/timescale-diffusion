@@ -14,10 +14,9 @@ import wandb
 import pathlib
 
 from blocks.unet import UNet
+from vqvae.model import VQVAE
 from data.pair_dali import PairDataset
-
-# from data.frame_random_index import FrameDataset
-from utils import unpack
+from utils import unpack, load_frozen_vqvae
 from losses.reconstructionLosses import MixReconstructionLoss
 
 # -------------- Functions
@@ -36,19 +35,40 @@ def save_model(model):
 
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
-    x_hat = model(x, t)
 
-    loss = ssim_loss(x_hat, y)
+    z = vqvae.generate_latent(x)
+    z_hat = model(z, t)
+
+    embed_loss_x, x_hat, perp_x, _ = vqvae.generate_output_from_latent(z)
+    embed_loss_y, y_hat, perp_y, _ = vqvae.generate_output_from_latent(z_hat)
+
+    orig_loss = ssim_loss(x_hat, x)
+    pred_loss = ssim_loss(y_hat, y)
+
+    loss = orig_loss + pred_loss + embed_loss_x + embed_loss_y
 
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
-    if batch_idx % logging_rate == 0:
-        wandb.log({"train/loss": loss.item()})
 
-    if batch_idx % (logging_rate**2) == 0:
-        caption = "left: input, middle: prediction, right: target"
-        mosaic = torch.cat([x[:4], x_hat[:4], y[:4]], dim=-1)
+    if batch_idx % logging_rate == 0:
+        wandb.log(
+            {
+                "train/loss": loss.item(),
+                "train/orig_loss": orig_loss.item(),
+                "train/pred_loss": pred_loss.item(),
+                "train/perplexity_x": perp_x.item(),
+                "train/perplexity_y": perp_y.item(),
+                "train/embed_loss_x": embed_loss_x.item(),
+                "train/embed_loss_y": embed_loss_y.item(),
+            }
+        )
+
+    if batch_idx % img_logging_rate == 0:
+        caption = (
+            "left: input, mid left: recon orig, mid right: recon target, right: target"
+        )
+        mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
@@ -84,18 +104,27 @@ torch.set_float32_matmul_precision("high")
 batch_size = config["data"]["batch_size"]
 learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
 num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
-logging_rate = config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
 epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
+logging_rate = config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
+img_logging_rate = (
+    config["hp"]["img_logging_rate"]
+    if "img_logging_rate" in config["hp"]
+    else logging_rate**2
+)
 
 # Model(s)
-# Just UNET for now
 model_unopt = UNet(**config["model"])
-summary(model_unopt, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 7)))
+summary(model_unopt, input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)))
 model_unopt = model_unopt.to(device)
 model = torch.compile(model_unopt, **config["compile"])
 
+vqvae = VQVAE(**config["vqvae"])
+vqvae.train(False)
+
 # optim
-optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
+params = list(model_unopt.parameters())
+params += list(vqvae.parameters())
+optimizer = optim.AdamW(params, lr=learning_rate)
 
 # loss
 ssim_loss = MixReconstructionLoss()

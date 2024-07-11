@@ -1,18 +1,26 @@
 [hp]
 lr = 1e-3
 num_epochs = 5
-epoch_size = 10000
+epoch_size = 100000
 
 [model]
 depth = 4
 down_layers = ["ResDown", 'AttnDown', 'AttnDown']
 up_layers = ['AttnUp', 'AttnUp', 'ResUp']
-in_dims = 3
-h_dims = 512
-out_dims = 3
+in_dims = 64
+h_dims = 256
+out_dims = 64
 kernel_size = 3
 padding = 1
 e_dims = 64
+
+[vqvae]
+h_dim = 128
+res_h_dim = 64
+n_res_layers = 4
+n_embeddings = 1024
+embedding_dim = 64
+beta = 0.5
 
 [compile]
 fullgraph = true

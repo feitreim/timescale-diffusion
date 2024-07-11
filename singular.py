@@ -41,23 +41,36 @@ def save_model(model):
 
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
-    z_hat = model.generate_latent(x)
-    u, s, vh = torch.linalg.svd(z_hat)
-    s[2] = s[2] + 0.1
-    z_hat = u @ torch.diag(s) @ vh
-    embed_loss, x_hat, perplexity, _ = model.generate_output_from_latent(z_hat)
+    z_x = model.generate_latent(x)
+    u, s, vh = torch.linalg.svd(z_x)
+    s = pusher(s)
+    z_y = u @ torch.diag_embed(s) @ vh
+    embed_loss_y, y_hat, perplexity_y, _ = model.generate_output_from_latent(z_y)
+    embed_loss_x, x_hat, perplexity_x, _ = model.generate_output_from_latent(z_x)
 
-    loss = ssim_loss(x_hat, y)
+    pred_loss = ssim_loss(y_hat, y)
+    orig_loss = ssim_loss(x_hat, x)
+    loss = pred_loss + orig_loss + embed_loss_y + embed_loss_x
 
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
     if batch_idx % logging_rate == 0:
-        wandb.log({"train/loss": loss.item()})
+        wandb.log(
+            {
+                "train/loss": loss.item(),
+                "train/pred_loss": pred_loss.item(),
+                "train/orig_loss": orig_loss.item(),
+                "train/embed_loss_y": embed_loss_y.item(),
+                "train/embed_loss_x": embed_loss_x.item(),
+                "train/perplexity_y": perplexity_y.item(),
+                "train/perplexity_x": perplexity_x.item(),
+            }
+        )
 
     if batch_idx % (logging_rate**2) == 0:
-        caption = "left: input, middle: prediction, right: target"
-        mosaic = torch.cat([x[:4], x_hat[:4], y[:4]], dim=-1)
+        caption = "left: input, middle left: input recon, middle right: target recon, right: target"
+        mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
@@ -99,12 +112,27 @@ epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100
 # Model(s)
 # Just UNET for now
 model_unopt = VQVAE(**config["model"])
-summary(model_unopt, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 7)))
+summary(model_unopt, input_size=(batch_size, 3, 256, 256))
 model_unopt = model_unopt.to(device)
 model = torch.compile(model_unopt, **config["compile"])
 
+
+class Pusher(nn.Module):
+    def __init__(self, last_dim_size):
+        super().__init__()
+        push = torch.randn(1, 1, last_dim_size)
+        self.push = torch.nn.Parameter(push, requires_grad=True)
+
+    def forward(self, x):
+        return x + self.push
+
+
+pusher = Pusher(16).to(device)
+
 # optim
-optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
+params = list(model_unopt.parameters())
+params += list(pusher.parameters())
+optimizer = optim.AdamW(params, lr=learning_rate)
 
 # loss
 ssim_loss = MixReconstructionLoss()
@@ -114,11 +142,12 @@ dataset = PairDataset(**config["data"])
 # val_dataset = FrameDataset(**config['val_data'])
 # wandb
 wandb.init(project="latent-rotation", name=args.name)
+save_model(model)
 
 for e in range(num_epochs):
     wandb.log({"epoch": e})
     for batch_idx, batch in tqdm(enumerate(dataset)):
         training_step(batch_idx, batch)
         if batch_idx >= epoch_size:
-            save_model(model, checkpoint_path)
+            save_model(model)
             break

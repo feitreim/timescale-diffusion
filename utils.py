@@ -4,6 +4,9 @@ from torch.cuda.random import device_count
 import wandb
 import os
 from typing import List, Tuple
+import toml
+
+from vqvae.model import VQVAE
 
 
 def collate_timescales(
@@ -83,3 +86,12 @@ def clear_gpu_mem_after(func):
         torch.cuda.empty_cache()
 
     return wrapper
+
+
+def load_frozen_vqvae(name: str):
+    state, args = download_artifact(name)
+    args_dict = toml.load(args)
+    vqvae = VQVAE(**args_dict["model_options"])
+    vqvae.load_state_dict(torch.load(state, map_location="cpu"))
+    vqvae.eval()
+    return vqvae

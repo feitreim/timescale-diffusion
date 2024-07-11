@@ -5,7 +5,6 @@ from typing import Dict, Union, List
 from vqvae.models.encoder import Encoder
 from vqvae.models.quantizer import VectorQuantizer
 from vqvae.models.decoder import Decoder
-from vqvae.models.conditioning import ConditionBlock
 
 
 class VQVAE(nn.Module):
@@ -35,18 +34,12 @@ class VQVAE(nn.Module):
         else:
             self.img_to_embedding_map = None
 
-    def forward(self, x, verbose=False):
+    def forward(self, x):
         z_e = self.encoder(x)
 
         z_e = self.pre_quantization_conv(z_e)
         embedding_loss, z_q, perplexity, _, _ = self.vector_quantization(z_e)
         x_hat = self.decoder(z_q)
-
-        if verbose:
-            print("original data shape:", x.shape)
-            print("encoded data shape:", z_e.shape)
-            print("recon data shape:", x_hat.shape)
-            assert False
 
         return embedding_loss, x_hat, perplexity, z_e
 
