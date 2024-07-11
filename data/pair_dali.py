@@ -1,5 +1,6 @@
 import torch
 import os
+import numpy as np
 import pytorch_lightning as pl
 from typing import Tuple, Dict
 from nvidia.dali import pipeline_def, Pipeline
@@ -8,14 +9,50 @@ import nvidia.dali.types as types
 import nvidia.dali.plugin.pytorch as pydali
 from torch.utils.data import DataLoader
 from einops import rearrange
+from random import shuffle
 
 from utils import convert_timestamp_to_periodic
 from data.frame_random_index import FrameRandomIndexModule
 
 
+class PairLabelSource:
+    def __init__(self, directory, batch_size):
+        self.dir = directory
+        self.batch_size = batch_size
+
+        files = os.listdir(directory)
+        shuffle(files)
+
+        self.files = files
+        labels = [f.split("_") for f in files]
+        self.x_labels = [
+            convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels
+        ]
+        self.y_labels = [
+            convert_timestamp_to_periodic(int(l[1]), fps=30) for l in labels
+        ]
+
+    def __iter__(self):
+        self.i = 0
+        self.n = len(self.files)
+        return self
+
+    def __next__(self):
+        batch = []
+        t_x = []
+        t_y = []
+        for _ in range(self.batch_size):
+            f = open(self.dir + self.files[self.i], "rb")
+            batch.append(np.frombuffer(f.read(), dtype=np.uint8))
+            t_x.append(np.array([self.x_labels[self.i]], dtype=np.float32))
+            t_y.append(np.array([self.y_labels[self.i]], dtype=np.float32))
+            self.i = (self.i + 1) % self.n
+        return (batch, t_x, t_y)
+
+
 @pipeline_def
 def img_pipe(
-    filelist,
+    ext_source,
     fill,
     name,
     prefetch,
@@ -23,15 +60,7 @@ def img_pipe(
     shard_id=0,
     num_devices=1,
 ):
-    j2ks, labels = fn.readers.file(
-        file_list=filelist,
-        initial_fill=fill,
-        prefetch_queue_depth=prefetch,
-        shard_id=shard_id,
-        num_shards=num_devices,
-        random_shuffle=shuffle,
-        name=name,
-    )
+    j2ks, t_x, t_y = fn.external_source(source=ext_source, num_outputs=3)
 
     images = fn.experimental.decoders.image(
         j2ks,
@@ -44,7 +73,7 @@ def img_pipe(
     reorder = fn.transpose(images, perm=[2, 0, 1])
     scale = types.Constant(255)
     normalized = reorder / scale
-    return normalized, labels
+    return normalized, t_x, t_y
 
 
 class PairDataset(torch.utils.data.IterableDataset):
@@ -67,7 +96,7 @@ class PairDataset(torch.utils.data.IterableDataset):
 
     def __init__(
         self,
-        filelist,
+        dir,
         periodic,
         batch_size,
         num_threads,
@@ -79,8 +108,11 @@ class PairDataset(torch.utils.data.IterableDataset):
     ):
         super().__init__()
         self.name = f"Reader{shard_id}"
+
+        ext = PairLabelSource(directory=dir, batch_size=batch_size)
+
         pipe = img_pipe(
-            filelist=filelist,
+            ext_source=iter(ext),
             fill=fill,
             prefetch=prefetch,
             shuffle=shuffle,
@@ -92,31 +124,23 @@ class PairDataset(torch.utils.data.IterableDataset):
             device_id=shard_id,
         )
         self.pipeline = pydali.DALIGenericIterator(
-            pipe, output_map=["frames", "labels"], reader_name=self.name
+            pipe, output_map=["frames", "t_x", "t_y"]
         )
-        self.periodic
+        self.periodic = periodic
 
     def __iter__(self):
         for data in enumerate(self.pipeline):
-            frames, labels = (
+            frames, t_x, t_y = (
                 data[1][0]["frames"],
-                data[1][0]["labels"],
+                data[1][0]["t_x"],
+                data[1][0]["t_y"],
             )
 
             frames = frames.squeeze()
             x = frames[:, :, :, :256]
             y = frames[:, :, :, 256:]
 
-            labels = [l[0].split("_") for l in labels]
-            x_labels = [convert_timestamp_to_periodic(int(l[0])) for l in labels]
-            y_labels = [convert_timestamp_to_periodic(int(l[1])) for l in labels]
-
-            yield (
-                x,
-                y,
-                torch.stack(x_labels).squeeze(),
-                torch.stack(y_labels).squeeze(),
-            )
+            yield (x, y, t_x.squeeze(), t_y.squeeze())
 
     def __len__(self):
         return self.pipeline.size

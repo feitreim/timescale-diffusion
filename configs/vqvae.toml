@@ -1,0 +1,35 @@
+[hp]
+lr = 1e-3
+num_epochs = 5
+epoch_size = 10000
+
+[model]
+h_dim = 128
+res_h_dim = 64
+n_res_layers = 4
+n_embeddings = 1024
+embedding_dim = 16
+beta = 0.5
+
+[compile]
+fullgraph = true
+mode = "max-autotune"
+
+[data]
+dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/4hrs/"
+periodic = true
+batch_size = 12
+num_threads = 4
+fill = 5000
+prefetch = 4
+shuffle = true
+
+
+[val_data]
+to_diff = false
+data_dir = "/cluster/research-groups/wehrwein/webcam/geiranger/validation_frames_random/"
+input_size = [256, 256]
+fps = 30
+offset_seconds = 17251202
+batch_size = 6
+num_workers = 0
