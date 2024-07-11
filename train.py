@@ -96,7 +96,7 @@ optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
 ssim_loss = MixReconstructionLoss()
 
 # dataset
-dataset = DALIDataset(**config["data"])
+dataset = PairDataset(**config["data"])
 # val_dataset = FrameDataset(**config['val_data'])
 # wandb
 wandb.init(project="timescale-diffusion", name=args.name)

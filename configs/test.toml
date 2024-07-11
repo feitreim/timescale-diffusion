@@ -19,7 +19,7 @@ fullgraph = true
 mode = "max-autotune"
 
 [data]
-filelist = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/4hrs/filelist.txt"
+dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/4hrs/"
 periodic = true
 batch_size = 12
 num_threads = 4
