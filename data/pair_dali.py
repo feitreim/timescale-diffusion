@@ -47,7 +47,7 @@ def img_pipe(
     return normalized, labels
 
 
-class DALIDataset(torch.utils.data.IterableDataset):
+class PairDataset(torch.utils.data.IterableDataset):
     """
     Iterator Style pytorch dataset that uses a NVIDIA DALI pipeline to load video data
     quickly with gpu acceleration. Also provides multi-frame context.
@@ -103,18 +103,26 @@ class DALIDataset(torch.utils.data.IterableDataset):
                 data[1][0]["labels"],
             )
 
-            timestamps_list = [
-                convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels
-            ]
-            timestamps = torch.stack(timestamps_list)
+            frames = frames.squeeze()
+            x = frames[:, :, :, :256]
+            y = frames[:, :, :, 256:]
 
-            yield frames, timestamps
+            labels = [l[0].split("_") for l in labels]
+            x_labels = [convert_timestamp_to_periodic(int(l[0])) for l in labels]
+            y_labels = [convert_timestamp_to_periodic(int(l[1])) for l in labels]
+
+            yield (
+                x,
+                y,
+                torch.stack(x_labels).squeeze(),
+                torch.stack(y_labels).squeeze(),
+            )
 
     def __len__(self):
         return self.pipeline.size
 
 
-class DaliImage(pl.LightningDataModule):
+class PairDatamodule(pl.LightningDataModule):
     """
     Sequenced Multiframe NVIDIA Dali powered dataloader with normalized
     timestamps accross the whole dataset.

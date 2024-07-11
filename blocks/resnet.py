@@ -7,7 +7,7 @@ from typing import List
 class ResBlock(nn.Module):
     def __init__(self, in_dim, h_dim, kernel_size, padding):
         super().__init__()
-        activation = nn.SiLU()
+        activation = nn.Tanh()
         block = []
         block.append(nn.Conv2d(in_dim, h_dim, kernel_size, padding=padding))
         block.append(activation)
@@ -18,8 +18,7 @@ class ResBlock(nn.Module):
         self.block = nn.Sequential(*block)
 
     def forward(self, x):
-        x = x + self.block(x)
-        return x
+        return x + self.block(x)
 
 
 class ResDown(nn.Module):
@@ -29,7 +28,7 @@ class ResDown(nn.Module):
         self.down = nn.Conv2d(
             in_dim, h_dim, kernel_size=kernel_size, stride=2, padding=padding
         )
-        self.act = nn.SiLU()
+        self.act = nn.Tanh()
 
     def forward(self, x, t):
         x = self.block(x)
@@ -44,7 +43,7 @@ class ResUp(nn.Module):
         self.in_conv = nn.Conv2d(in_dim, in_dim // 2, kernel_size, padding=padding)
         self.block = ResBlock(in_dim // 2, h_dim, kernel_size, padding)
         self.up = nn.ConvTranspose2d(in_dim // 2, h_dim, kernel_size=2, stride=2)
-        self.act = nn.SiLU()
+        self.act = nn.Tanh()
 
     def forward(self, x, t):
         x = self.in_conv(x)

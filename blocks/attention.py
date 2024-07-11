@@ -42,12 +42,12 @@ class AttnDown(nn.Module):
         super().__init__()
         self.in_conv = nn.Sequential(
             nn.Conv2d(in_dims, in_dims, kernel_size, padding=padding),
-            nn.SiLU(),
+            nn.Tanh(),
         )
         self.attention = AttnBlock(e_dim)
         self.down_conv = nn.Sequential(
             nn.Conv2d(in_dims, out_dims, kernel_size, stride=2, padding=padding),
-            nn.SiLU(),
+            nn.Tanh(),
         )
 
     def forward(self, x, t):
@@ -62,12 +62,12 @@ class AttnUp(nn.Module):
         super().__init__()
         self.in_conv = nn.Sequential(
             nn.Conv2d(in_dims, in_dims // 2, kernel_size, padding=padding),
-            nn.SiLU(),
+            nn.Tanh(),
         )
         self.attention = AttnBlock(e_dim)
         self.up_conv = nn.Sequential(
             nn.ConvTranspose2d(in_dims // 2, out_dims, kernel_size=2, stride=2),
-            nn.SiLU(),
+            nn.Tanh(),
         )
 
     def forward(self, x, t):

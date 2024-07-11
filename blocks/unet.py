@@ -5,7 +5,7 @@ from typing import List
 
 from blocks.attention import AttnUp, AttnDown, AttnBlock
 from blocks.resnet import ResUp, ResDown
-from blocks.time import TimeEmbedding1D
+from blocks.time import TimeEmbedding1D, TimeEmbedding2D
 
 
 class UNet(nn.Module):
@@ -38,8 +38,8 @@ class UNet(nn.Module):
         super().__init__()
         dims = [h_dims // (2**i) for i in range(0, depth).__reversed__()]
         print(dims)
-        activation = nn.SiLU()
-        self.t_emb = TimeEmbedding1D(7, e_dims)
+        activation = nn.Tanh()
+        self.t_emb = TimeEmbedding2D(7, e_dims)
         self.in_conv = nn.Conv2d(in_dims, dims[0] // 2, kernel_size, padding=padding)
         down = [
             get_layer(down_layers[i], h // 2, h, kernel_size, padding, e_dims)
@@ -56,7 +56,7 @@ class UNet(nn.Module):
         self.out_conv = nn.Conv2d(dims[0] // 2, out_dims, kernel_size, padding=padding)
         self.n_ups = len(self.up_layers) - 1
 
-    def forward(self, x, t):
+    def skip_connection(self, x, t):
         x = self.in_conv(x)
         t = self.t_emb(t)
         states = []
@@ -67,6 +67,9 @@ class UNet(nn.Module):
             x = l(torch.cat([x, states[self.n_ups - i]], dim=1), t)
         x = self.out_conv(x)
         return x
+
+    def forward(self, x, t):
+        return x + self.skip_connection(x, t)
 
 
 class UNetBottom(nn.Module):

@@ -1,6 +1,8 @@
 import torch
 from torch import Tensor
-
+from torch.cuda.random import device_count
+import wandb
+import os
 from typing import List, Tuple
 
 
@@ -49,10 +51,35 @@ def convert_timestamp_to_periodic_vec(t):
 
 
 def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:
-    x, t = batch
-    x = x.squeeze().to(device)
-    t = t.squeeze().to(device)
-    y = x[:, 1]
-    x = x[:, 0]
-    t = t[:, 0]
+    x, y, t_x, t_y = batch
+    x = x.to(device)
+    y = y.to(device)
+    t = torch.stack([t_x, t_y], dim=1).to(device)
     return x, y, t
+
+
+def download_artifact(name: str) -> Tuple[str, str]:
+    """
+    downloads the artifact with the given name and then
+    returns:
+        - state_dict (str): path to the state dict.
+        - arg_dict (str): path to the args dict.
+    """
+    api = wandb.Api()
+    artifact = api.artifact(name)
+    root = artifact.download()
+    files = os.listdir(root)
+    f1 = os.path.join(root, files[0])
+    f2 = os.path.join(root, files[1])
+    if os.path.getsize(f1) > os.path.getsize(f2):
+        return f1, f2
+    else:
+        return f2, f1
+
+
+def clear_gpu_mem_after(func):
+    def wrapper(*args):
+        func(*args)
+        torch.cuda.empty_cache()
+
+    return wrapper
