@@ -23,9 +23,14 @@ from losses.reconstructionLosses import MixReconstructionLoss
 # -------------- Functions
 
 
-def save_model(model, path):
-    torch.save(model.state_dict(), path)
-    artifact.add_file(local_path=path, name="model_state_dict", is_tmp=True)
+def save_model(model):
+    artifact = wandb.Artifact(args.name, type="model")
+    artifact.add_file(local_path=args.config_file, name="model_config", is_tmp=True)
+    checkpoint_path = pathlib.Path(f"./.checkpoints") / f"{args.name}"
+    checkpoint_path.mkdir(parents=True, exist_ok=True)
+    checkpoint_path = f"{str(checkpoint_path.resolve())}/model_state_dict.pth"
+    torch.save(model.state_dict(), checkpoint_path)
+    artifact.add_file(local_path=checkpoint_path, name="model_state_dict", is_tmp=True)
     wandb.log_artifact(artifact)
 
 
@@ -100,17 +105,12 @@ dataset = PairDataset(**config["data"])
 # val_dataset = FrameDataset(**config['val_data'])
 # wandb
 wandb.init(project="timescale-diffusion", name=args.name)
-artifact = wandb.Artifact(args.name, type="model")
-artifact.add_file(local_path=args.config_file, name="model_config", is_tmp=True)
-checkpoint_path = pathlib.Path(f"./.checkpoints") / f"{args.name}"
-checkpoint_path.mkdir(parents=True, exist_ok=True)
-checkpoint_path = f"{str(checkpoint_path.resolve())}/model_state_dict.pth"
-save_model(model, checkpoint_path)
+save_model(model)
 
 for e in range(num_epochs):
     wandb.log({"epoch": e})
     for batch_idx, batch in tqdm(enumerate(dataset)):
         training_step(batch_idx, batch)
         if batch_idx >= epoch_size:
-            save_model(model, checkpoint_path)
+            save_model(model)
             break
