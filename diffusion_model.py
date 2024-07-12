@@ -5,12 +5,18 @@ from typing import Dict
 from blocks.unet import UNet
 from vqvae.model import VQVAE
 
+
 class LTDM(nn.Module):
-    def __init__(self, unet_config: Dict, vqvae_config: Dict):
+    def __init__(self, unet_config: Dict, vqvae_config: Dict, compile_config: Dict):
         super().__init__()
-        self.unet = UNet(**unet_config) 
+        self.unet = UNet(**unet_config)
         self.vae = VQVAE(**vqvae_config)
-    
+        self.generate_latent = torch.compile(self.generate_latent, **compile_config)
+        self.diffusion_step = torch.compile(self.diffusion_step, **compile_config)
+        self.generate_output_from_latent = torch.compile(
+            self.generate_output_from_latent, **compile_config
+        )
+
     def forward(self, x, t):
         z = self.generate_latent(x)
         z_hat = self.unet(z, t)
@@ -22,7 +28,6 @@ class LTDM(nn.Module):
 
     def diffusion_step(self, z, t):
         return self.unet(z, t)
-    
+
     def generate_output_from_latent(self, z_hat):
         return self.vae.generate_output_from_latent(z_hat)
-

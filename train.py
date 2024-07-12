@@ -11,12 +11,12 @@ from tqdm import tqdm
 import toml
 import argparse
 import wandb
+import random
 import pathlib
 
-from blocks.unet import UNet
-from vqvae.model import VQVAE
+from diffusion_model import LTDM
 from data.pair_dali import PairDataset
-from utils import unpack, load_frozen_vqvae
+from utils import unpack
 from losses.reconstructionLosses import MixReconstructionLoss
 
 # -------------- Functions
@@ -36,11 +36,11 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    z = vqvae.generate_latent(x)
-    z_hat = model(z, t)
+    z = model.generate_latent(x)
+    z_hat = model.diffusion_step(z, t)
 
-    embed_loss_x, x_hat, perp_x, _ = vqvae.generate_output_from_latent(z)
-    embed_loss_y, y_hat, perp_y, _ = vqvae.generate_output_from_latent(z_hat)
+    embed_loss_x, x_hat, perp_x, _ = model.generate_output_from_latent(z)
+    embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_hat)
 
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
@@ -85,6 +85,13 @@ def validation_step(batch_idx, batch):
         wandb.log({"val/loss": loss.item()})
 
 
+def running_average_weights(model: nn.Module, path, beta):
+    state = torch.load(path)
+    for name, param in model.named_parameters():
+        param.data = (param.data * beta) + (state[name] * (1 - beta))
+    torch.save(model, path)
+
+
 # --------------- Script
 
 # Args
@@ -113,18 +120,18 @@ img_logging_rate = (
 )
 
 # Model(s)
-model_unopt = UNet(**config["model"])
-summary(model_unopt, input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)))
-model_unopt = model_unopt.to(device)
-model = torch.compile(model_unopt, **config["compile"])
-
-vqvae = VQVAE(**config["vqvae"])
-vqvae.train(False)
+model = LTDM(config["unet"], config["vqvae"])
+summary(model, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 7)))
+model = model.to(device)
 
 # optim
-params = list(model_unopt.parameters())
-params += list(vqvae.parameters())
-optimizer = optim.AdamW(params, lr=learning_rate)
+optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+
+
+ema_id = random.randint(0, 2000000)
+ema_path = f"./.running_avgs/{ema_id}/lastweight.ckpt"
+ema_beta = config["ema"]["beta"]
+ema_interval = config["ema"]["interval"]
 
 # loss
 ssim_loss = MixReconstructionLoss()
@@ -140,6 +147,8 @@ for e in range(num_epochs):
     wandb.log({"epoch": e})
     for batch_idx, batch in tqdm(enumerate(dataset)):
         training_step(batch_idx, batch)
+        if batch_idx % ema_interval == 0:
+            running_average_weights(model, ema_path, ema_beta)
         if batch_idx >= epoch_size:
             save_model(model)
             break

@@ -25,7 +25,6 @@ class AttnBlock(nn.Module):
     """
 
     def forward(self, x: Tensor, t: Tensor):
-        # TODO maybe change the x reshaping to just a reorder to ensure the vq codewords remain unchanged.
         shape = x.shape
         x = x.view(shape[0], -1, self.e_dim)
         x_n = self.norm(x)
