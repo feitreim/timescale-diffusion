@@ -12,7 +12,7 @@ import toml
 import argparse
 import wandb
 import random
-import pathlib
+from pathlib import Path
 
 from diffusion_model import LTDM
 from data.pair_dali import PairDataset
@@ -25,7 +25,7 @@ from losses.reconstructionLosses import MixReconstructionLoss
 def save_model(model):
     artifact = wandb.Artifact(args.name, type="model")
     artifact.add_file(local_path=args.config_file, name="model_config", is_tmp=True)
-    checkpoint_path = pathlib.Path(f"./.checkpoints") / f"{args.name}"
+    checkpoint_path = Path(f"./.checkpoints") / f"{args.name}"
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{str(checkpoint_path.resolve())}/model_state_dict.pth"
     torch.save(model.state_dict(), checkpoint_path)
@@ -36,11 +36,7 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    z = model.generate_latent(x)
-    z_hat = model.diffusion_step(z, t)
-
-    embed_loss_x, x_hat, perp_x, _ = model.generate_output_from_latent(z)
-    embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_hat)
+    (embed_loss_x, embed_loss_y, x_hat, y_hat, perp_x, perp_y) = model(x, t)
 
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
@@ -85,10 +81,11 @@ def validation_step(batch_idx, batch):
         wandb.log({"val/loss": loss.item()})
 
 
+@torch.no_grad
 def running_average_weights(model: nn.Module, path, beta):
-    state = torch.load(path)
+    state = torch.load(path).state_dict()
     for name, param in model.named_parameters():
-        param.data = (param.data * beta) + (state[name] * (1 - beta))
+        param.data = (param.data * beta) + (state[name].data * (1 - beta))
     torch.save(model, path)
 
 
@@ -120,18 +117,24 @@ img_logging_rate = (
 )
 
 # Model(s)
-model = LTDM(config["unet"], config["vqvae"])
-summary(model, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 7)))
-model = model.to(device)
-
+model_unopt = LTDM(config["unet"], config["vqvae"])
+summary(model_unopt.unet, input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)))
+summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
+model_unopt = model_unopt.to(device)
+# model = torch.compile(model_unopt, **config["compile"])
+# ema breaks the compiled model right now.
+model = model_unopt
 # optim
-optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
+optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
 
-
+# ema of weights
 ema_id = random.randint(0, 2000000)
-ema_path = f"./.running_avgs/{ema_id}/lastweight.ckpt"
+ema_path = f"./.running_avgs/{ema_id}/"
 ema_beta = config["ema"]["beta"]
 ema_interval = config["ema"]["interval"]
+Path(ema_path).mkdir(parents=True, exist_ok=True)
+ema_path = Path(ema_path) / "lastweight.ckpt"
+torch.save(model_unopt, ema_path)
 
 # loss
 ssim_loss = MixReconstructionLoss()
@@ -141,14 +144,14 @@ dataset = PairDataset(**config["data"])
 # val_dataset = FrameDataset(**config['val_data'])
 # wandb
 wandb.init(project="timescale-diffusion", name=args.name)
-save_model(model)
+save_model(model_unopt)
 
 for e in range(num_epochs):
     wandb.log({"epoch": e})
     for batch_idx, batch in tqdm(enumerate(dataset)):
         training_step(batch_idx, batch)
         if batch_idx % ema_interval == 0:
-            running_average_weights(model, ema_path, ema_beta)
+            running_average_weights(model_unopt, ema_path, ema_beta)
         if batch_idx >= epoch_size:
-            save_model(model)
+            save_model(model_unopt)
             break

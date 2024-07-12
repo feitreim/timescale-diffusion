@@ -3,7 +3,7 @@ lr = 1e-3
 num_epochs = 5
 epoch_size = 100000
 
-[model]
+[unet]
 depth = 4
 down_layers = ["ResDown", 'AttnDown', 'AttnDown']
 up_layers = ['AttnUp', 'AttnUp', 'ResUp']

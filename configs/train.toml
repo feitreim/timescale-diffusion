@@ -2,10 +2,11 @@
 lr = 1e-3
 num_epochs = 5
 epoch_size = 100000
+img_logging_rate = 5000
 
 [ema]
-beta = 0.2
-interval = 500
+beta = 0.1
+interval = 100
 
 [unet]
 depth = 4
@@ -33,7 +34,7 @@ mode = "max-autotune"
 [data]
 dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/4hrs/"
 periodic = true
-batch_size = 12
+batch_size = 64
 num_threads = 4
 fill = 5000
 prefetch = 4

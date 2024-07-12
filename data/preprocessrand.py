@@ -2,10 +2,20 @@ import torchvision
 import torch
 import argparse
 import toml
+import random
 from tqdm import tqdm
 
 
-def process_pair(l, r, step, offset, root):
+def process_pair(l, r, max_distance, step, offset, root):
+    def get_distances(max):
+        distances = []
+        d = max
+        while d > 0:
+            distances.append(d)
+            d = d // 2
+        return distances
+
+    distances = get_distances(max_distance)
     l_video, _, _ = torchvision.io.video.read_video(
         l, pts_unit="sec", output_format="TCHW"
     )
@@ -14,20 +24,19 @@ def process_pair(l, r, step, offset, root):
     )
 
     l_len = l_video.shape[0]
-    r_len = r_video.shape[0]
 
-    shorter = l_len if l_len < r_len else r_len
-
-    r_offset = offset + r_len
+    t_video = torch.cat([l_video, r_video], dim=0)
+    t_len = t_video.shape[0]
 
     i = 0
-    while i < shorter:
-        l_frame = l_video[i]
-        r_frame = r_video[i]
+    while i < l_len and i + max_distance < t_len:
+        distance = distances[random.randint(0, len(distances))]
+        l_frame = t_video[i]
+        r_frame = t_video[i + distance]
         combined = torch.cat([l_frame, r_frame], dim=-1)
-        fname = f"{root}/{i+offset}_{i+r_offset}"
+        fname = f"{root}/{i+offset}_{i+distance}"
         torchvision.io.write_jpeg(combined, fname, quality=100)
-        i += step
+        i += step + random.randint(-step//2, step//2)
 
     return l_len
 
@@ -81,6 +90,7 @@ def main():
     parser.add_argument("config_file", help="Path to the configuration file")
     parser.add_argument("output_path", help="run name.")
     parser.add_argument("--step", help="step size", type=int, default=100)
+    parser.add_argument("--distance", help="max distance between frames", type=int, default = 100000)
     args = parser.parse_args()
 
     config = toml.decoder.load(args.config_file)
@@ -94,7 +104,7 @@ def main():
 
     for i in tqdm(range(len(lhs_vids))):
         process_pair(
-            lhs_vids[i], rhs_vids[i], args.step, offsets[i], args.output_path
+            lhs_vids[i], rhs_vids[i], args.distance, args.step, offsets[i], args.output_path
         )
 
 
