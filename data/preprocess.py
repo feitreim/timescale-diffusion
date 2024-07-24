@@ -39,11 +39,10 @@ def compute_frame_timestamps(first_vid, video_file_paths):
         - Videos should already be in order.
         - Videos should contain timestamp information in YYMMDD_HHMMSS
     """
+
     def compute_date_info(path):
         filename = path.split("/")[-1]
-        filename = filename.casefold().strip(
-            "adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/"
-        )
+        filename = filename.casefold().strip("adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/")
         yearmonthday = filename.split("_")[0]
         hourminsec = filename.split("_")[-1]
 
@@ -76,6 +75,7 @@ def compute_frame_timestamps(first_vid, video_file_paths):
         video_timestamps.append(frames)
     return video_timestamps
 
+
 def main():
     parser = argparse.ArgumentParser(description="train the timescale diffusion model")
     parser.add_argument("config_file", help="Path to the configuration file")
@@ -93,9 +93,7 @@ def main():
     assert len(lhs_vids) == len(rhs_vids)
 
     for i in tqdm(range(len(lhs_vids))):
-        process_pair(
-            lhs_vids[i], rhs_vids[i], args.step, offsets[i], args.output_path
-        )
+        process_pair(lhs_vids[i], rhs_vids[i], args.step, offsets[i], args.output_path)
 
 
 if __name__ == "__main__":

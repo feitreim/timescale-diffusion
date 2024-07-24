@@ -28,17 +28,18 @@ def process_pair(l, r, max_distance, step, offset, root):
     t_video = torch.cat([l_video, r_video], dim=0)
     t_len = t_video.shape[0]
 
-    i = 0
+    i, total = 0, 0
     while i < l_len and i + max_distance < t_len:
-        distance = distances[random.randint(0, len(distances))]
+        distance = distances[random.randint(0, len(distances) - 1)]
         l_frame = t_video[i]
         r_frame = t_video[i + distance]
         combined = torch.cat([l_frame, r_frame], dim=-1)
         fname = f"{root}/{i+offset}_{i+distance}"
         torchvision.io.write_jpeg(combined, fname, quality=100)
-        i += step + random.randint(-step//2, step//2)
+        i += step + random.randint(-step // 2, step // 2)
+        total += 1
 
-    return l_len
+    return total
 
 
 def compute_frame_timestamps(first_vid, video_file_paths):
@@ -48,11 +49,10 @@ def compute_frame_timestamps(first_vid, video_file_paths):
         - Videos should already be in order.
         - Videos should contain timestamp information in YYMMDD_HHMMSS
     """
+
     def compute_date_info(path):
         filename = path.split("/")[-1]
-        filename = filename.casefold().strip(
-            "adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/"
-        )
+        filename = filename.casefold().strip("adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/")
         yearmonthday = filename.split("_")[0]
         hourminsec = filename.split("_")[-1]
 
@@ -85,12 +85,15 @@ def compute_frame_timestamps(first_vid, video_file_paths):
         video_timestamps.append(frames)
     return video_timestamps
 
+
 def main():
     parser = argparse.ArgumentParser(description="train the timescale diffusion model")
     parser.add_argument("config_file", help="Path to the configuration file")
     parser.add_argument("output_path", help="run name.")
     parser.add_argument("--step", help="step size", type=int, default=100)
-    parser.add_argument("--distance", help="max distance between frames", type=int, default = 100000)
+    parser.add_argument(
+        "--distance", help="max distance between frames", type=int, default=100000
+    )
     args = parser.parse_args()
 
     config = toml.decoder.load(args.config_file)
@@ -101,11 +104,18 @@ def main():
     offsets = compute_frame_timestamps(lhs_vids[0], lhs_vids)
 
     assert len(lhs_vids) == len(rhs_vids)
-
+    total = 0
     for i in tqdm(range(len(lhs_vids))):
-        process_pair(
-            lhs_vids[i], rhs_vids[i], args.distance, args.step, offsets[i], args.output_path
+        total += process_pair(
+            lhs_vids[i],
+            rhs_vids[i],
+            args.distance,
+            args.step,
+            offsets[i],
+            args.output_path,
         )
+        print("Done with a pair.")
+        print(f"saved {total} images so far...")
 
 
 if __name__ == "__main__":
