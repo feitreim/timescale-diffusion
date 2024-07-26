@@ -1,23 +1,24 @@
 [hp]
 lr = 1e-3
 num_epochs = 5
-epoch_size = 100000
-img_logging_rate = 5000
+epoch_size = 200000
+img_logging_rate = 15000
 
 [ema]
-beta = 0.1
-interval = 100
+beta = 0.25
+interval = 1000
 
 [unet]
 depth = 4
-down_layers = ["ResDown", 'AttnDown', 'AttnDown']
-up_layers = ['AttnUp', 'AttnUp', 'ResUp']
+down_layers = ['AttnDown', "AttnDown", 'AttnDown']
+up_layers = ['AttnUp', 'AttnUp', 'AttnUp']
 in_dims = 64
 h_dims = 256
 out_dims = 64
-kernel_size = 3
-padding = 1
+kernel_size = 5
+padding = 2
 e_dims = 64
+heads = 8
 
 [vqvae]
 h_dim = 128
@@ -29,12 +30,12 @@ beta = 0.5
 
 [compile]
 fullgraph = true
-mode = "max-autotune"
+mode = "reduce-overhead"
 
 [data]
-dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/4hrs/"
+dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/random/"
 periodic = true
-batch_size = 64
+batch_size = 32
 num_threads = 4
 fill = 5000
 prefetch = 4

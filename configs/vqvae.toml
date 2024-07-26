@@ -3,6 +3,10 @@ lr = 1e-3
 num_epochs = 5
 epoch_size = 100000
 
+[ema]
+beta = 0.1
+interval = 150
+
 [model]
 h_dim = 128
 res_h_dim = 64
@@ -16,12 +20,12 @@ fullgraph = true
 mode = "max-autotune"
 
 [data]
-dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/4hrs/"
+dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/random/"
 periodic = true
-batch_size = 12
-num_threads = 4
+batch_size = 32
+num_threads = 1
 fill = 5000
-prefetch = 4
+prefetch = 8
 shuffle = true
 
 
