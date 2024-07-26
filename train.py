@@ -13,6 +13,7 @@ import argparse
 import wandb
 import random
 from pathlib import Path
+from torchmetrics.image import PeakSignalNoiseRatio
 
 from diffusion_model import LTDM
 from data.pair_dali import PairDataset
@@ -41,7 +42,7 @@ def training_step(batch_idx, batch):
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
 
-    loss = orig_loss + pred_loss + embed_loss_x + embed_loss_y
+    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x
 
     optimizer.zero_grad()
     loss.backward()
@@ -71,11 +72,18 @@ def training_step(batch_idx, batch):
 
 
 @torch.no_grad
-def validation_step(batch_idx, batch):
+def validation_step(
+    batch_idx,
+    batch,
+    psnr,
+):
     x, y, t = unpack(batch, device)
-    x_hat = model(x, t)
+
+    (embed_loss_x, embed_loss_y, x_hat, y_hat, perp_x, perp_y) = model(x, t)
 
     loss = ssim_loss(x_hat, y)
+    psnr_x = psnr(x_hat, x)
+    psnr_y = psnr(y_hat, y)
 
     if batch_idx % 10 == 0:
         wandb.log({"val/loss": loss.item()})
@@ -83,75 +91,81 @@ def validation_step(batch_idx, batch):
 
 @torch.no_grad
 def running_average_weights(model: nn.Module, path, beta):
-    state = torch.load(path).state_dict()
-    for name, param in model.named_parameters():
-        param.data = (param.data * beta) + (state[name].data * (1 - beta))
-    torch.save(model, path)
+    with torch.no_grad():
+        state = torch.load(path).state_dict()
+        for name, param in model.named_parameters():
+            param.data = (param.data * beta) + (state[name].data * (1 - beta))
+        torch.save(model, path)
 
 
 # --------------- Script
+if __name__ == "__main__":
+    # Args
+    parser = argparse.ArgumentParser(description="train the timescale diffusion model")
+    parser.add_argument("config_file", help="Path to the configuration file")
+    parser.add_argument("--name", help="run name.")
+    args = parser.parse_args()
 
-# Args
-parser = argparse.ArgumentParser(description="train the timescale diffusion model")
-parser.add_argument("config_file", help="Path to the configuration file")
-parser.add_argument("--name", help="run name.")
-args = parser.parse_args()
+    # Load config
+    config = toml.decoder.load(args.config_file)
 
-# Load config
-config = toml.decoder.load(args.config_file)
+    # Device configuration
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    torch.set_float32_matmul_precision("high")
 
-# Device configuration
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-torch.set_float32_matmul_precision("high")
+    # Hyperparameters
+    batch_size = config["data"]["batch_size"]
+    learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
+    num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
+    epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
+    logging_rate = (
+        config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
+    )
+    img_logging_rate = (
+        config["hp"]["img_logging_rate"]
+        if "img_logging_rate" in config["hp"]
+        else logging_rate**2
+    )
 
-# Hyperparameters
-batch_size = config["data"]["batch_size"]
-learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
-num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
-epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
-logging_rate = config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
-img_logging_rate = (
-    config["hp"]["img_logging_rate"]
-    if "img_logging_rate" in config["hp"]
-    else logging_rate**2
-)
+    # Model(s)
+    model_unopt = LTDM(config["unet"], config["vqvae"])
+    summary(
+        model_unopt.unet,
+        depth=4,
+        input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)),
+    )
+    summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
+    model_unopt = model_unopt.to(device)
+    model = torch.compile(model_unopt, **config["compile"])
+    # optim
+    optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
 
-# Model(s)
-model_unopt = LTDM(config["unet"], config["vqvae"])
-summary(model_unopt.unet, input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)))
-summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
-model_unopt = model_unopt.to(device)
-# model = torch.compile(model_unopt, **config["compile"])
-# ema breaks the compiled model right now.
-model = model_unopt
-# optim
-optimizer = optim.AdamW(model_unopt.parameters(), lr=learning_rate)
+    # ema of weights
+    ema_id = random.randint(0, 2000000)
+    ema_path = f"./.running_avgs/{ema_id}/"
+    ema_beta = config["ema"]["beta"]
+    ema_interval = config["ema"]["interval"]
+    Path(ema_path).mkdir(parents=True, exist_ok=True)
+    ema_path = Path(ema_path) / "lastweight.ckpt"
+    torch.save(model_unopt, ema_path)
 
-# ema of weights
-ema_id = random.randint(0, 2000000)
-ema_path = f"./.running_avgs/{ema_id}/"
-ema_beta = config["ema"]["beta"]
-ema_interval = config["ema"]["interval"]
-Path(ema_path).mkdir(parents=True, exist_ok=True)
-ema_path = Path(ema_path) / "lastweight.ckpt"
-torch.save(model_unopt, ema_path)
+    # loss
+    ssim_loss = MixReconstructionLoss()
+    psnr = PeakSignalNoiseRatio()
 
-# loss
-ssim_loss = MixReconstructionLoss()
+    # dataset
+    dataset = PairDataset(**config["data"])
+    # val_dataset = FrameDataset(**config['val_data'])
+    # wandb
+    wandb.init(project="timescale-diffusion", name=args.name)
+    save_model(model_unopt)
 
-# dataset
-dataset = PairDataset(**config["data"])
-# val_dataset = FrameDataset(**config['val_data'])
-# wandb
-wandb.init(project="timescale-diffusion", name=args.name)
-save_model(model_unopt)
-
-for e in range(num_epochs):
-    wandb.log({"epoch": e})
-    for batch_idx, batch in tqdm(enumerate(dataset)):
-        training_step(batch_idx, batch)
-        if batch_idx % ema_interval == 0:
-            running_average_weights(model_unopt, ema_path, ema_beta)
-        if batch_idx >= epoch_size:
-            save_model(model_unopt)
-            break
+    for e in range(num_epochs):
+        wandb.log({"epoch": e})
+        for batch_idx, batch in tqdm(enumerate(dataset)):
+            training_step(batch_idx, batch)
+            if batch_idx % ema_interval == 0:
+                running_average_weights(model_unopt, ema_path, ema_beta)
+            if batch_idx >= epoch_size:
+                save_model(model_unopt)
+                break
