@@ -13,7 +13,7 @@ imageio
 pims
 sk-video
 # Logging libraries
-wandb 
+wandb
 pip-system-certs
 # Misc
 typing
@@ -24,3 +24,4 @@ matplotlib
 pandas
 seaborn
 ruff
+dill

@@ -9,7 +9,8 @@ import nvidia.dali.types as types
 import nvidia.dali.plugin.pytorch as pydali
 from torch.utils.data import DataLoader
 from einops import rearrange
-from random import shuffle
+import random
+import dill
 
 from utils import convert_timestamp_to_periodic
 from data.frame_random_index import FrameRandomIndexModule
@@ -17,40 +18,44 @@ from data.frame_random_index import FrameRandomIndexModule
 
 class PairLabelSource:
     def __init__(self, directory, batch_size):
-        self.dir = directory
-        self.batch_size = batch_size
-
         files = os.listdir(directory)
-        shuffle(files)
-
-        self.files = files
+        random.shuffle(files)
+        files = self.files
         labels = [f.split("_") for f in files]
-        self.x_labels = [
-            convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels
-        ]
-        self.y_labels = [
-            convert_timestamp_to_periodic(int(l[1]), fps=30) for l in labels
-        ]
+        x_labels = [convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels]
+        y_labels = [convert_timestamp_to_periodic(int(l[1]), fps=30) for l in labels]
+
+        globals().update(
+            {
+                "dir": directory,
+                "batch_size": batch_size,
+                "files": files,
+                "x_labels": x_labels,
+                "y_labels": y_labels,
+            }
+        )
 
     def __iter__(self):
-        self.i = 0
         self.n = len(self.files)
         return self
 
-    def __next__(self):
+    def __next__(self, idx):
+        if idx >= self.n:
+            raise StopIteration
         batch = []
         t_x = []
         t_y = []
         for _ in range(self.batch_size):
-            f = open(self.dir + self.files[self.i], "rb")
+            f = open(self.dir + self.files[idx], "rb")
             batch.append(np.frombuffer(f.read(), dtype=np.uint8))
-            t_x.append(np.array([self.x_labels[self.i]], dtype=np.float32))
-            t_y.append(np.array([self.y_labels[self.i]], dtype=np.float32))
-            self.i = (self.i + 1) % self.n
+            t_x.append(np.array([self.x_labels[idx]], dtype=np.float32))
+            t_y.append(np.array([self.y_labels[idx]], dtype=np.float32))
         return (batch, t_x, t_y)
 
 
-@pipeline_def
+@pipeline_def(
+    py_start_method="spawn",
+)
 def img_pipe(
     ext_source,
     fill,
@@ -60,9 +65,11 @@ def img_pipe(
     shard_id=0,
     num_devices=1,
 ):
-    j2ks, t_x, t_y = fn.external_source(source=ext_source, num_outputs=3)
+    j2ks, t_x, t_y = fn.external_source(
+        source=ext_source, batch=True, parallel=True, batch_info=True, num_outputs=3
+    )
 
-    images = fn.experimental.decoders.image(
+    images = fn.decoders.image(
         j2ks,
         preallocate_height_hint=256,
         preallocate_width_hint=256,
@@ -109,10 +116,41 @@ class PairDataset(torch.utils.data.IterableDataset):
         super().__init__()
         self.name = f"Reader{shard_id}"
 
-        ext = PairLabelSource(directory=dir, batch_size=batch_size)
+        files = os.listdir(dir)
+        random.shuffle(files)
+
+        labels = [f.split("_") for f in files]
+        x_labels = [convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels]
+        y_labels = [convert_timestamp_to_periodic(int(l[1]), fps=30) for l in labels]
+        n = len(files)
+
+        globals().update(
+            {
+                "n": n,
+                "dir": dir,
+                "batch_size": batch_size,
+                "files": files,
+                "x_labels": x_labels,
+                "y_labels": y_labels,
+            }
+        )
+
+        def external_source(info):
+            idx = info.iteration
+            if idx + batch_size >= n:
+                raise StopIteration
+            batch = []
+            t_x = []
+            t_y = []
+            for i in range(batch_size):
+                f = open(dir + files[idx + i], "rb")
+                batch.append(np.frombuffer(f.read(), dtype=np.uint8))
+                t_x.append(np.array([x_labels[idx + i]], dtype=np.float32))
+                t_y.append(np.array([y_labels[idx + i]], dtype=np.float32))
+            return (batch, t_x, t_y)
 
         pipe = img_pipe(
-            ext_source=iter(ext),
+            ext_source=external_source,
             fill=fill,
             prefetch=prefetch,
             shuffle=shuffle,
@@ -123,6 +161,7 @@ class PairDataset(torch.utils.data.IterableDataset):
             num_threads=num_threads,
             device_id=shard_id,
         )
+
         self.pipeline = pydali.DALIGenericIterator(
             pipe, output_map=["frames", "t_x", "t_y"]
         )
