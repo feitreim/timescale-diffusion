@@ -1,7 +1,5 @@
 from typing import List, Tuple, Union
 
-from lightning_fabric.utilities.distributed import _init_dist_connection
-from numpy.core.numeric import indices
 import torch
 from torch import Tensor
 import torch.utils.data
@@ -9,7 +7,6 @@ import pytorch_lightning as pl
 import torchvision.transforms.v2 as v2
 import torchvision.io as io
 import os
-import sys
 
 from utils import convert_timestamp_to_periodic
 

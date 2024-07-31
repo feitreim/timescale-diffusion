@@ -1,14 +1,12 @@
 import torch
 import os
 import pytorch_lightning as pl
-from typing import Tuple
 
 from nvidia.dali import pipeline_def
 import nvidia.dali.fn as fn
 import nvidia.dali.types as types
 import nvidia.dali.plugin.pytorch as pydali
 from torch.utils.data import DataLoader
-from einops import rearrange
 from utils import convert_timestamp_to_periodic
 
 """

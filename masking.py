@@ -35,7 +35,7 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    mask = torch.ones((batch_size, 256), device=device)
+    mask = torch.ones(batch_size, 256)
     mask = nn.functional.dropout1d(mask, 0.80)
     mask = mask.view(batch_size, 1, 16, 16)
     mask = v2.functional.resize(
@@ -51,6 +51,7 @@ def training_step(batch_idx, batch):
     z_m = model.generate_latent(x_m)
     z_m = model.unet(z_m, t)
     embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
+
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
 
@@ -77,25 +78,18 @@ def training_step(batch_idx, batch):
         caption = (
             "left: input, mid left: recon orig, mid right: recon target, right: target"
         )
-        mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
+        mosaic = torch.cat([x[:4], x_hat[:4], x_m[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
 
 
 @torch.no_grad
-def validation_step(
-    batch_idx,
-    batch,
-    psnr,
-):
+def validation_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
-
-    (embed_loss_x, embed_loss_y, x_hat, y_hat, perp_x, perp_y) = model(x, t)
+    x_hat = model(x, t)
 
     loss = ssim_loss(x_hat, y)
-    psnr_x = psnr(x_hat, x)
-    psnr_y = psnr(y_hat, y)
 
     if batch_idx % 10 == 0:
         wandb.log({"val/loss": loss.item()})
@@ -103,15 +97,10 @@ def validation_step(
 
 @torch.no_grad
 def running_average_weights(model: nn.Module, path, beta):
-    with torch.no_grad():
-        state = torch.load(path, weights_only=False).state_dict()
-        model_state = model.state_dict()
-        for name in model_state.keys():
-            model_state[name].data = (model_state[name].data * beta) + (
-                state[name].data * (1 - beta)
-            )
-        torch.save(model, path)
-        model.load_state_dict(model_state)
+    state = torch.load(path).state_dict()
+    for name, param in model.named_parameters():
+        param.data = (param.data * beta) + (state[name].data * (1 - beta))
+    torch.save(model, path)
 
 
 # --------------- Script

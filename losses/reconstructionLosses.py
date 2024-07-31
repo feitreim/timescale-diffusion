@@ -6,7 +6,6 @@ PyTorch implementations of Reconstruction Losses.
 from typing import Union, Tuple, List
 import torch
 from torch import Tensor
-from torchmetrics.image import MultiScaleStructuralSimilarityIndexMeasure
 from losses.ssim import MS_SSIM
 from einops import rearrange
 

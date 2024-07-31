@@ -4,12 +4,11 @@ import queue
 import argparse
 import toml
 import random
-from tqdm import tqdm
 import multiprocessing as mp
 
 
 def process_pair(l, r, max_distance, step, offset, root):
-    print(f"processing pair.")
+    print("processing pair.")
     l_video = torchvision.io.VideoReader(l, "video")
     l_video.set_current_stream("video:0")
     print("l_video open")

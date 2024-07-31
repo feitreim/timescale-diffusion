@@ -1,11 +1,10 @@
 import torch
 import torch.nn as nn
-from torch import Tensor
 from typing import List
 
 from blocks.attention import AttnUp, AttnDown, AttnBlock
 from blocks.resnet import ResUp, ResDown
-from blocks.time import TimeEmbedding1D, TimeEmbedding2D
+from blocks.time import TimeEmbedding2D
 
 
 class UNet(nn.Module):

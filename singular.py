@@ -3,32 +3,23 @@ An experiment on the effect of increasing a singular value inorder to move throu
 inside of the latent space.
 """
 
-import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as f
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from torch import Tensor
-from torchvision import datasets, transforms
-import torchvision.transforms.v2 as v2
 from torchinfo import summary
-from typing import List, Tuple
 from tqdm import tqdm
 import toml
 import argparse
 import wandb
 import pathlib
 import random
-import os
 from pathlib import Path
-from multiprocessing import freeze_support
 
 from vqvae.model import VQVAE
 from data.pair_dali import PairDataset
 
 # from data.frame_random_index import FrameDataset
-from utils import unpack, download_artifact, convert_timestamp_to_periodic
+from utils import unpack
 from losses.reconstructionLosses import MixReconstructionLoss
 
 # -------------- Functions
@@ -37,7 +28,7 @@ from losses.reconstructionLosses import MixReconstructionLoss
 def save_model(model):
     artifact = wandb.Artifact(args.name, type="model")
     artifact.add_file(local_path=args.config_file, name="model_config", is_tmp=True)
-    checkpoint_path = pathlib.Path(f"./.checkpoints") / f"{args.name}"
+    checkpoint_path = pathlib.Path("./.checkpoints") / f"{args.name}"
     checkpoint_path.mkdir(parents=True, exist_ok=True)
     checkpoint_path = f"{str(checkpoint_path.resolve())}/model_state_dict.pth"
     torch.save(model.state_dict(), checkpoint_path)

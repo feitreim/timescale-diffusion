@@ -1,9 +1,4 @@
-import torch
 import torch.nn as nn
-from torch import Tensor
-from typing import List
-
-from blocks.attention import AttnBlock
 
 
 class TimeEmbedding1D(nn.Module):

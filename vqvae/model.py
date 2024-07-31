@@ -1,7 +1,4 @@
-import torch
 import torch.nn as nn
-import numpy as np
-from typing import Dict, Union, List
 from vqvae.models.encoder import Encoder
 from vqvae.models.quantizer import VectorQuantizer
 from vqvae.models.decoder import Decoder

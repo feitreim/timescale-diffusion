@@ -2,15 +2,12 @@ import torch
 import os
 import numpy as np
 import pytorch_lightning as pl
-from typing import Tuple, Dict
-from nvidia.dali import pipeline_def, Pipeline
+from typing import Dict
+from nvidia.dali import pipeline_def
 import nvidia.dali.fn as fn
 import nvidia.dali.types as types
 import nvidia.dali.plugin.pytorch as pydali
-from torch.utils.data import DataLoader
-from einops import rearrange
 import random
-import dill
 
 from utils import convert_timestamp_to_periodic
 from data.frame_random_index import FrameRandomIndexModule
@@ -101,7 +98,7 @@ class PairDataset(torch.utils.data.IterableDataset):
         def external_source(info):
             idx = info.iteration
             if idx + batch_size >= n:
-                raise StopIteration
+                idx = idx - n
             batch = []
             t_x = []
             t_y = []

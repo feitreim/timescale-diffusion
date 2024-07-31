@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as f
 from torch import Tensor
-from typing import List
 
 from blocks.resnet import ResBlock
 
