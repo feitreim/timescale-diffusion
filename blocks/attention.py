@@ -56,12 +56,14 @@ class AttnDown(nn.Module):
             ResBlock(in_dims, in_dims, kernel_size, padding),
             nn.Conv2d(in_dims, in_dims, kernel_size, padding=padding),
             nn.Tanh(),
+            nn.BatchNorm2d(in_dims),
         )
         attn = [AttnBlock(e_dim) for i in range(heads)]
         self.attention = nn.ModuleList(attn)
         self.down_conv = nn.Sequential(
             nn.Conv2d(in_dims, out_dims, kernel_size, stride=2, padding=padding),
             nn.Tanh(),
+            nn.BatchNorm2d(out_dims),
             ResBlock(out_dims, out_dims, kernel_size, padding),
         )
 
@@ -77,15 +79,20 @@ class AttnUp(nn.Module):
     def __init__(self, in_dims, out_dims, kernel_size, padding, e_dim, heads):
         super().__init__()
         self.in_conv = nn.Sequential(
+            ResBlock(in_dims, in_dims, kernel_size, padding),
+            nn.BatchNorm2d(in_dims),
             nn.Conv2d(in_dims, in_dims // 2, kernel_size, padding=padding),
             nn.Tanh(),
+            nn.BatchNorm2d(in_dims // 2),
         )
         attn = [AttnBlock(e_dim) for i in range(heads)]
         self.attention = nn.ModuleList(attn)
         self.up_conv = nn.Sequential(
             nn.ConvTranspose2d(in_dims // 2, out_dims, kernel_size=2, stride=2),
             nn.Tanh(),
+            nn.BatchNorm2d(out_dims),
             ResBlock(out_dims, out_dims, kernel_size, padding),
+            nn.BatchNorm2d(out_dims),
         )
 
     def forward(self, x, t):
