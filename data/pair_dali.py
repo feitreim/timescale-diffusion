@@ -16,43 +16,6 @@ from utils import convert_timestamp_to_periodic
 from data.frame_random_index import FrameRandomIndexModule
 
 
-class PairLabelSource:
-    def __init__(self, directory, batch_size):
-        files = os.listdir(directory)
-        random.shuffle(files)
-        files = self.files
-        labels = [f.split("_") for f in files]
-        x_labels = [convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels]
-        y_labels = [convert_timestamp_to_periodic(int(l[1]), fps=30) for l in labels]
-
-        globals().update(
-            {
-                "dir": directory,
-                "batch_size": batch_size,
-                "files": files,
-                "x_labels": x_labels,
-                "y_labels": y_labels,
-            }
-        )
-
-    def __iter__(self):
-        self.n = len(self.files)
-        return self
-
-    def __next__(self, idx):
-        if idx >= self.n:
-            raise StopIteration
-        batch = []
-        t_x = []
-        t_y = []
-        for _ in range(self.batch_size):
-            f = open(self.dir + self.files[idx], "rb")
-            batch.append(np.frombuffer(f.read(), dtype=np.uint8))
-            t_x.append(np.array([self.x_labels[idx]], dtype=np.float32))
-            t_y.append(np.array([self.y_labels[idx]], dtype=np.float32))
-        return (batch, t_x, t_y)
-
-
 @pipeline_def(
     py_start_method="spawn",
 )

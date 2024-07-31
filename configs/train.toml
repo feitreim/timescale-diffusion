@@ -5,35 +5,36 @@ epoch_size = 200000
 img_logging_rate = 15000
 
 [ema]
-beta = 0.25
-interval = 1000
+beta = 0.8
+interval = 250
 
 [unet]
 depth = 4
 down_layers = ['AttnDown', "AttnDown", 'AttnDown']
 up_layers = ['AttnUp', 'AttnUp', 'AttnUp']
 in_dims = 64
-h_dims = 256
+h_dims = 512
 out_dims = 64
-kernel_size = 5
-padding = 2
+kernel_size = 3
+padding = 1
 e_dims = 64
-heads = 8
+heads = 4
 
 [vqvae]
 h_dim = 128
 res_h_dim = 64
 n_res_layers = 4
 n_embeddings = 1024
+stacks = 2
 embedding_dim = 64
-beta = 0.5
+beta = 0.1
 
 [compile]
 fullgraph = true
 mode = "reduce-overhead"
 
 [data]
-dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/random/"
+dir = "/cluster/research-groups/wehrwein/webcam/geiranger/jpeg_pairs_10/"
 periodic = true
 batch_size = 32
 num_threads = 4

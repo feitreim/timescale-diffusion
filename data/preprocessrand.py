@@ -1,43 +1,48 @@
 import torchvision
 import torch
+import queue
 import argparse
 import toml
 import random
 from tqdm import tqdm
+import multiprocessing as mp
 
 
 def process_pair(l, r, max_distance, step, offset, root):
-    def get_distances(max):
-        distances = []
-        d = max
-        while d > 0:
-            distances.append(d)
-            d = d // 2
-        return distances
+    print(f"processing pair.")
+    l_video = torchvision.io.VideoReader(l, "video")
+    l_video.set_current_stream("video:0")
+    print("l_video open")
+    r_video = torchvision.io.VideoReader(r, "video")
+    print("r_video open")
+    r_video.set_current_stream("video:0")
 
-    distances = get_distances(max_distance)
-    l_video, _, _ = torchvision.io.video.read_video(
-        l, pts_unit="sec", output_format="TCHW"
-    )
-    r_video, _, _ = torchvision.io.video.read_video(
-        r, pts_unit="sec", output_format="TCHW"
-    )
-
-    l_len = l_video.shape[0]
-
-    t_video = torch.cat([l_video, r_video], dim=0)
-    t_len = t_video.shape[0]
+    l_len = 432000
+    fps = 30
+    r_len = 432000
+    t_len = int(l_len + r_len)
 
     i, total = 0, 0
     while i < l_len and i + max_distance < t_len:
-        distance = distances[random.randint(0, len(distances) - 1)]
-        l_frame = t_video[i]
-        r_frame = t_video[i + distance]
+        distance = random.randint(0, max_distance)
+        if i + distance >= l_len:
+            l_video.seek(i / fps)
+            l_frame = next(l_video)["data"]
+            idx = (i + distance - l_len) / fps
+            idx = idx if idx > 0 else 1
+            r_video.seek(idx)
+            r_frame = next(r_video)["data"]
+        else:
+            l_video.seek(i / fps)
+            l_frame = next(l_video)["data"]
+            l_video.seek((i + distance) / fps)
+            r_frame = next(l_video)["data"]
         combined = torch.cat([l_frame, r_frame], dim=-1)
         fname = f"{root}/{i+offset}_{i+distance}"
         torchvision.io.write_jpeg(combined, fname, quality=100)
         i += step + random.randint(-step // 2, step // 2)
         total += 1
+        print(f"saved file {fname}. this proc saved {total}")
 
     return total
 
@@ -86,36 +91,69 @@ def compute_frame_timestamps(first_vid, video_file_paths):
     return video_timestamps
 
 
+def gen_args(lhs, rhs, distance, step, offsets, output_path):
+    for i in range(len(lhs)):
+        args = (lhs[i], rhs[i], distance, step, offsets[i], output_path)
+        yield args
+
+
 def main():
     parser = argparse.ArgumentParser(description="train the timescale diffusion model")
     parser.add_argument("config_file", help="Path to the configuration file")
     parser.add_argument("output_path", help="run name.")
+    parser.add_argument("--num_shards", help="total number of shards", type=int)
+    parser.add_argument("--shard", help="which shard this is.", type=int)
     parser.add_argument("--step", help="step size", type=int, default=100)
     parser.add_argument(
         "--distance", help="max distance between frames", type=int, default=100000
     )
     args = parser.parse_args()
-
     config = toml.decoder.load(args.config_file)
 
     lhs_vids = config["lhs_videos"]
     rhs_vids = config["rhs_videos"]
-
     offsets = compute_frame_timestamps(lhs_vids[0], lhs_vids)
-
     assert len(lhs_vids) == len(rhs_vids)
-    total = 0
-    for i in tqdm(range(len(lhs_vids))):
-        total += process_pair(
-            lhs_vids[i],
-            rhs_vids[i],
-            args.distance,
-            args.step,
-            offsets[i],
-            args.output_path,
-        )
-        print("Done with a pair.")
-        print(f"saved {total} images so far...")
+
+    # sharding
+    shard_size = len(lhs_vids) // args.num_shards
+    start = shard_size * args.shard
+    end = len(lhs_vids)
+    if not args.shard == args.num_shards - 1:
+        end = shard_size * (args.shard + 1)
+
+    lhs_vids = lhs_vids[start:end]
+    rhs_vids = rhs_vids[start:end]
+    offsets = offsets[start:end]
+
+    print(f"shard size: {shard_size}, s: {start}, e: {end}")
+
+    with mp.Pool(8) as pool:
+        result_queue = mp.Manager().Queue()
+        args_list = [
+            (
+                lhs_vids[i],
+                rhs_vids[i],
+                args.distance,
+                args.step,
+                offsets[i],
+                args.output_path,
+            )
+            for i in range(len(lhs_vids))
+        ]
+        for result in pool.starmap(process_pair, args_list):
+            result_queue.put(result)
+
+        total = 0
+        while True:
+            try:
+                result = result_queue.get(timeout=1)
+                total += result
+                print("Done with a pair.")
+                print(f"saved {total} images so far...")
+            except queue.Empty:
+                if result_queue.empty():
+                    break
 
 
 if __name__ == "__main__":
