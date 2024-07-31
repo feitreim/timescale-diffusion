@@ -49,12 +49,12 @@ def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
     t = t.flatten(start_dim=1).unsqueeze_(1)
 
-    z_x = model.generate_latent(x)
+    z_x = gen_latent(x)
     u, s, vh = torch.linalg.svd(z_x)
     s = pusher(s, t)
     z_y = u @ torch.diag_embed(s) @ vh
-    embed_loss_y, y_hat, perplexity_y, _ = model.generate_output_from_latent(z_y)
-    embed_loss_x, x_hat, perplexity_x, _ = model.generate_output_from_latent(z_x)
+    embed_loss_y, y_hat, perplexity_y, _ = gen_output(z_y)
+    embed_loss_x, x_hat, perplexity_x, _ = gen_output(z_x)
 
     pred_loss = ssim_loss(y_hat, y)
     orig_loss = ssim_loss(x_hat, x)
@@ -95,12 +95,16 @@ def validation_step(batch_idx, batch):
         wandb.log({"val/loss": loss.item()})
 
 
-@torch.no_grad
 def running_average_weights(model: nn.Module, path, beta):
-    state = torch.load(path).state_dict()
-    for name, param in model.named_parameters():
-        param.data = (param.data * beta) + (state[name].data * (1 - beta))
-    torch.save(model, path)
+    with torch.no_grad():
+        state = torch.load(path).state_dict()
+        model_state = model.state_dict()
+        for name in model_state.keys():
+            model_state[name].data = (model_state[name].data * beta) + (
+                state[name].data * (1 - beta)
+            )
+        torch.save(model, path)
+        model.load_state_dict(model_state)
 
 
 # --------------- Script
@@ -121,7 +125,7 @@ if __name__ == "__main__":
 
     # Device configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    torch.set_float32_matmul_precision("high")
+    torch.set_float32_matmul_precision("medium")
 
     # Hyperparameters
     learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
@@ -137,6 +141,10 @@ if __name__ == "__main__":
     summary(model_unopt, input_size=(batch_size, 3, 256, 256))
     model_unopt = model_unopt.to(device)
     model = torch.compile(model_unopt, **config["compile"])
+    gen_latent = torch.compile(model_unopt.generate_latent, **config["compile"])
+    gen_output = torch.compile(
+        model_unopt.generate_output_from_latent, **config["compile"]
+    )
 
     class Pusher(nn.Module):
         def __init__(self, last_dim_size):
@@ -146,6 +154,7 @@ if __name__ == "__main__":
             self.bias = torch.nn.Parameter(bias, requires_grad=True)
             self.weight = torch.nn.Parameter(weight, requires_grad=True)
 
+        @torch.compile
         def forward(self, x, t):
             """
             inputs:

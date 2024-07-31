@@ -92,10 +92,14 @@ def validation_step(
 @torch.no_grad
 def running_average_weights(model: nn.Module, path, beta):
     with torch.no_grad():
-        state = torch.load(path).state_dict()
-        for name, param in model.named_parameters():
-            param.data = (param.data * beta) + (state[name].data * (1 - beta))
+        state = torch.load(path, weights_only=False).state_dict()
+        model_state = model.state_dict()
+        for name in model_state.keys():
+            model_state[name].data = (model_state[name].data * beta) + (
+                state[name].data * (1 - beta)
+            )
         torch.save(model, path)
+        model.load_state_dict(model_state)
 
 
 # --------------- Script
@@ -111,7 +115,7 @@ if __name__ == "__main__":
 
     # Device configuration
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    torch.set_float32_matmul_precision("high")
+    torch.set_float32_matmul_precision("medium")
 
     # Hyperparameters
     batch_size = config["data"]["batch_size"]

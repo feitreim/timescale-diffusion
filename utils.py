@@ -5,6 +5,7 @@ import wandb
 import os
 from typing import List, Tuple
 import toml
+from tqdm import tqdm
 
 from vqvae.model import VQVAE
 from diffusion_model import LTDM
@@ -115,8 +116,8 @@ def load_frozen_vqvae(name: str):
 def load_model_from_artifact(artifact):
     state_dict_path, arg_dict_path = download_artifact(artifact)
     config = toml.load(arg_dict_path)
-    model = LTDM(config["unet_config"], config["vqvae_config"])
-    state_dict = torch.load(state_dict_path)
+    model = LTDM(config["unet"], config["vqvae"])
+    state_dict = torch.load(state_dict_path, weights_only=False)
     model.load_state_dict(state_dict)
     return model
 
@@ -125,9 +126,24 @@ def non_ar_video(model, frame, start, end, step):
     s_time = convert_timestamp_to_periodic(start)
     frame = frame.squeeze().reshape(1, 3, 256, 256)
     frames = []
-    for i in range(start, end, step):
+    for i in tqdm(range(start, end, step)):
         c_time = convert_timestamp_to_periodic(i)
         t = torch.stack([s_time, c_time]).unsqueeze(0)
 
         frames.append(model.diffusion_step(frame, t))
+    return frames
+
+
+def ar_video(model, frame, start, end, step):
+    s_time = convert_timestamp_to_periodic(start)
+    frame = frame.squeeze().reshape(1, 3, 256, 256)
+    frames = []
+    for i in tqdm(range(start, end, step)):
+        c_time = convert_timestamp_to_periodic(i)
+        t = torch.stack([s_time, c_time]).unsqueeze(0)
+
+        out_frame = model.diffusion_step(frame, t)
+        frames.append(out_frame)
+        s_time = c_time
+        frame = out_frame
     return frames
