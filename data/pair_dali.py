@@ -63,6 +63,7 @@ class PairDataset(torch.utils.data.IterableDataset):
 
     def __init__(
         self,
+        flist,
         dir,
         periodic,
         batch_size,
@@ -76,12 +77,23 @@ class PairDataset(torch.utils.data.IterableDataset):
         super().__init__()
         self.name = f"Reader{shard_id}"
 
-        files = os.listdir(dir)
+        with open(flist, "r") as file:
+            files = file.readlines()
+
+        for i in range(len(files)):
+            files[i] = files[i].strip("\n")
+
         random.shuffle(files)
 
         labels = [f.split("_") for f in files]
-        x_labels = [convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels]
-        y_labels = [convert_timestamp_to_periodic(int(l[1]), fps=30) for l in labels]
+        x_labels = [
+            convert_timestamp_to_periodic(int(os.path.basename(label[0])), fps=30)
+            for label in labels
+        ]
+        y_labels = [
+            convert_timestamp_to_periodic(int(os.path.basename(label[1])), fps=30)
+            for label in labels
+        ]
         n = len(files)
 
         globals().update(

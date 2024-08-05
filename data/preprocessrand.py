@@ -2,9 +2,31 @@ import torchvision
 import torch
 import queue
 import argparse
+import os
 import toml
 import random
 import multiprocessing as mp
+import cv2
+
+from pathlib import Path
+
+
+def get_frame_count(video_path):
+    # Open the video file
+    video = cv2.VideoCapture(video_path)
+
+    # Check if the video opened successfully
+    if not video.isOpened():
+        print("Error opening video file")
+        return -1
+
+    # Get the total number of frames
+    frame_count = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+
+    # Release the video object
+    video.release()
+
+    return frame_count
 
 
 def process_pair(l, r, max_distance, step, offset, root):
@@ -16,10 +38,13 @@ def process_pair(l, r, max_distance, step, offset, root):
     print("r_video open")
     r_video.set_current_stream("video:0")
 
-    l_len = 432000
+    l_len = get_frame_count(l)
     fps = 30
-    r_len = 432000
+    r_len = get_frame_count(r)
     t_len = int(l_len + r_len)
+
+    sub_dir = Path(root) / str(offset)
+    os.makedirs(sub_dir, exist_ok=True)
 
     i, total = 0, 0
     while i < l_len and i + max_distance < t_len:
@@ -37,7 +62,7 @@ def process_pair(l, r, max_distance, step, offset, root):
             l_video.seek((i + distance) / fps)
             r_frame = next(l_video)["data"]
         combined = torch.cat([l_frame, r_frame], dim=-1)
-        fname = f"{root}/{i+offset}_{i+distance}"
+        fname = sub_dir / f"{offset+i}_{offset+i+distance}"
         torchvision.io.write_jpeg(combined, fname, quality=100)
         i += step + random.randint(-step // 2, step // 2)
         total += 1

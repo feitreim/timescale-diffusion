@@ -4,8 +4,9 @@ num_epochs = 5
 epoch_size = 100000
 
 [ema]
-beta = 0.1
+beta = 0.4
 interval = 150
+start = 10000
 
 [model]
 h_dim = 128
@@ -14,13 +15,14 @@ n_res_layers = 4
 n_embeddings = 1024
 embedding_dim = 64
 beta = 0.5
+stacks = 2
 
 [compile]
 fullgraph = true
 mode = "max-autotune"
 
 [data]
-dir = "/scratch_ssd/research-groups/wehrwein/diffusion_frames/random/"
+dir = "/cluster/research-groups/wehrwein/webcam/geiranger/jpeg_pairs_10mo/"
 periodic = true
 batch_size = 32
 num_threads = 4

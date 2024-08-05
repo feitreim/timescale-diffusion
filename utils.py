@@ -37,16 +37,6 @@ FRAMES = [
     60 * 60 * 24 * 365.0 * 30.0,  # Year
 ]
 
-LEVEL = [
-    30,
-    60,
-    60,
-    24,
-    7,
-    31,
-    10,
-]
-
 
 def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
     """
@@ -56,11 +46,7 @@ def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
     """
     offset = offset_seconds * fps
     timestamp = t + offset
-    level = 0.1
-    output_list = [
-        int(((timestamp % FRAMES[i]) / FRAMES[i]) * LEVEL[i]) / LEVEL[i]
-        for i in range(len(FRAMES))
-    ]
+    output_list = [int((timestamp % FRAMES[i]) / FRAMES[i]) for i in range(len(FRAMES))]
     return torch.as_tensor(output_list)
 
 
@@ -112,11 +98,13 @@ def load_frozen_vqvae(name: str):
     return vqvae
 
 
-def load_model_from_artifact(artifact):
+def load_model_from_artifact(artifact, map_device="cuda"):
     state_dict_path, arg_dict_path = download_artifact(artifact)
     config = toml.load(arg_dict_path)
     model = LTDM(config["unet"], config["vqvae"])
-    state_dict = torch.load(state_dict_path, weights_only=False)
+    state_dict = torch.load(
+        state_dict_path, weights_only=False, map_location=torch.device(map_device)
+    )
     model.load_state_dict(state_dict)
     return model
 

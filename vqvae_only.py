@@ -36,32 +36,11 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    # masks start small (masking_size, masking_size), some are dropped out,
-    # then it the masks are upscaled to create a 16x16
-    # grid of mask.
-    if masking:
-        mask = torch.ones((batch_size, masking_size, masking_size), device=device)
-        dropout = (
-            torch.rand((batch_size, masking_size, masking_size), device=device)
-            > masking_factor
-        )
-        mask = mask * dropout
-        mask = mask.view(batch_size, 1, masking_size, masking_size)
-        mask = v2.functional.resize(
-            mask,
-            [256, 256],
-            interpolation=torchvision.transforms.InterpolationMode.NEAREST_EXACT,
-        )
-        x_m = mask * x.clone()
-    else:
-        x_m = torch.zeros_like(x)
-
     z = model.generate_latent(x)
     embed_loss_x, x_hat, perp_x, _ = model.generate_output_from_latent(z)
 
-    z_m = model.generate_latent(x_m)
-    z_m = model.unet(z_m, t)
-    embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
+    z_y = model.generate_latent(y)
+    embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_y)
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
 
@@ -88,7 +67,7 @@ def training_step(batch_idx, batch):
         caption = (
             "left: input, mid left: recon orig, mid right: recon target, right: target"
         )
-        mosaic = torch.cat([x[:4], x_hat[:4], x_m[:4], y_hat[:4], y[:4]], dim=-1)
+        mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
@@ -143,11 +122,6 @@ if __name__ == "__main__":
     # Hyperparameters
     batch_size = config["data"]["batch_size"]
     learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
-    masking = config["hp"]["masking"] if "masking" in config["hp"] else True
-    masking_size = config["hp"]["masking_size"] if "masking_size" in config["hp"] else 4
-    masking_factor = (
-        config["hp"]["masking_factor"] if "masking_factor" in config["hp"] else 0.9
-    )
 
     num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
     epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000

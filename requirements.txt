@@ -1,9 +1,12 @@
-# Standard torch libraries
+# main libraries
 torch
 torchvision
 torchmetrics
+torchinfo
 pytorch-lightning
 einops
+schedulefree
+nvidia-dali-cuda120
 # Libraries for metric calculation
 numpy
 scikit-learn
