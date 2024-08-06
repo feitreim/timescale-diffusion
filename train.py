@@ -5,7 +5,6 @@ from pathlib import Path
 import toml
 import torch
 import torch.nn as nn
-import torch.optim as optim
 import torchvision
 import torchvision.transforms.v2 as v2
 import wandb
@@ -18,6 +17,7 @@ from data.pair_dali import PairDataset
 from diffusion_model import LTDM
 from losses.reconstructionLosses import MixReconstructionLoss
 from utils import unpack
+from losses.singularValueLoss import singular_value_loss
 
 # -------------- Functions
 
@@ -54,7 +54,7 @@ def training_step(batch_idx, batch):
         )
         x_m = mask * x.clone()
     else:
-        x_m = torch.zeros_like(x)
+        x_m = x
 
     z = model.generate_latent(x)
     embed_loss_x, x_hat, perp_x, _ = model.generate_output_from_latent(z)
@@ -62,10 +62,14 @@ def training_step(batch_idx, batch):
     z_m = model.generate_latent(x_m)
     z_m = model.unet(z_m, t)
     embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
+
+    svd_x = singular_value_loss(z, t[:, 0])
+    svd_y = singular_value_loss(z_m, t[:, 1])
+
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
 
-    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x
+    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x + svd_x + svd_y
 
     optimizer.zero_grad()
     loss.backward()
@@ -81,6 +85,8 @@ def training_step(batch_idx, batch):
                 "train/perplexity_y": perp_y.item(),
                 "train/embed_loss_x": embed_loss_x.item(),
                 "train/embed_loss_y": embed_loss_y.item(),
+                "train/svd_x": svd_x.item(),
+                "train/svd_y": svd_y.item(),
             }
         )
 
@@ -143,6 +149,7 @@ if __name__ == "__main__":
     # Hyperparameters
     batch_size = config["data"]["batch_size"]
     learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
+    warmup_steps = config["hp"]["warmup"] if "warmup_steps" in config["hp"] else 10000
     masking = config["hp"]["masking"] if "masking" in config["hp"] else True
     masking_size = config["hp"]["masking_size"] if "masking_size" in config["hp"] else 4
     masking_factor = (
@@ -172,12 +179,13 @@ if __name__ == "__main__":
     model = torch.compile(model_unopt, **config["compile"])
     # optim
     optimizer = schedulefree.AdamWScheduleFree(
-        model_unopt.parameters(), lr=learning_rate
+        model_unopt.parameters(), lr=learning_rate, warmup_steps=warmup_steps
     )
 
     # ema of weights
     ema_id = random.randint(0, 2000000)
     ema_path = f"./.running_avgs/{ema_id}/"
+    ema_enabled = config["ema"]["enabled"]
     ema_beta = config["ema"]["beta"]
     ema_interval = config["ema"]["interval"]
     ema_start = config["ema"]["start"]
@@ -200,9 +208,9 @@ if __name__ == "__main__":
         wandb.log({"epoch": e})
         for batch_idx, batch in tqdm(enumerate(dataset)):
             training_step(batch_idx, batch)
-            if batch_idx % ema_interval == 0 and batch_idx > ema_start:
+            if batch_idx % ema_interval == 0 and batch_idx > ema_start and ema_enabled:
                 running_average_weights(model_unopt, ema_path, ema_beta)
-            elif batch_idx % ema_interval == 0:
+            elif batch_idx % ema_interval == 0 and ema_enabled:
                 torch.save(model_unopt, ema_path)
             if batch_idx >= epoch_size:
                 save_model(model_unopt)

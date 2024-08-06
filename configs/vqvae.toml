@@ -22,10 +22,11 @@ fullgraph = true
 mode = "max-autotune"
 
 [data]
-dir = "/cluster/research-groups/wehrwein/webcam/geiranger/jpeg_pairs_10mo/"
+flist = "/cluster/research-groups/wehrwein/webcam/geiranger/allframes/filelist.txt"
+dir = "/cluster/research-groups/wehrwein/webcam/geiranger/allframes/"
 periodic = true
 batch_size = 32
-num_threads = 4
+num_threads = 1
 fill = 5000
 prefetch = 8
 shuffle = true

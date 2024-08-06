@@ -1,16 +1,90 @@
-import torch
 import os
-import numpy as np
-import pytorch_lightning as pl
-from typing import Dict
-from nvidia.dali import pipeline_def
-import nvidia.dali.fn as fn
-import nvidia.dali.types as types
-import nvidia.dali.plugin.pytorch as pydali
 import random
+from typing import Dict
 
-from utils import convert_timestamp_to_periodic
+import numpy as np
+import nvidia.dali.fn as fn
+import nvidia.dali.plugin.pytorch as pydali
+import nvidia.dali.types as types
+import polars as plr
+import pytorch_lightning as pl
+import torch
+from nvidia.dali import pipeline_def
+
 from data.frame_random_index import FrameRandomIndexModule
+from utils import convert_timestamp_to_periodic
+
+
+class ExternalInputCallable:
+    def __init__(self, flist, dir, batch_size):
+        self.flist = flist
+        self.dir = dir
+        self.batch_size = batch_size
+        # def setup for workers
+        self.files = []
+        self.x_labels = []
+        self.y_labels = []
+        self.n = 0
+
+    def __getstate__(self):
+        return self.__dict__.copy()
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+        # deferred setup happens now
+        df = plr.read_csv(
+            self.flist, has_header=False, new_columns=["filename"], separator="\n"
+        )
+        # Shuffle the dataframe
+        df = df.sample(fraction=1.0, seed=random.randint(0, 1000000), shuffle=True)
+        # Split the filename into two parts
+        df = df.with_columns(
+            [
+                plr.col("filename").str.split("_").list.get(0).alias("x_label"),
+                plr.col("filename").str.split("_").list.get(1).alias("y_label"),
+            ]
+        )
+        df = df.with_columns(
+            [
+                plr.col("x_label")
+                .map_elements(
+                    lambda x: convert_timestamp_to_periodic(
+                        int(os.path.basename(x)), fps=30
+                    ),
+                    return_dtype=plr.datatypes.Object,
+                )
+                .alias("x_periodic"),
+                plr.col("y_label")
+                .map_elements(
+                    lambda x: convert_timestamp_to_periodic(
+                        int(os.path.basename(x)), fps=30
+                    ),
+                    return_dtype=plr.datatypes.Object,
+                )
+                .alias("y_periodic"),
+            ]
+        )
+        # Get the number of files
+        self.n = df.shape[0]
+
+        # If you need lists instead of DataFrame columns
+        self.files = df["filename"].to_list()
+        self.x_labels = df["x_periodic"].to_list()
+        self.y_labels = df["y_periodic"].to_list()
+
+    def __call__(self, info):
+        idx = info.iteration
+        if idx + self.batch_size >= self.n:
+            idx = idx - self.n
+        batch = []
+        t_x = []
+        t_y = []
+        for i in range(self.batch_size):
+            f = open(self.dir + self.files[idx + i], "rb")
+            batch.append(np.frombuffer(f.read(), dtype=np.uint8))
+            t_x.append(np.array([self.x_labels[idx + i]], dtype=np.float32))
+            t_y.append(np.array([self.y_labels[idx + i]], dtype=np.float32))
+        return (batch, t_x, t_y)
 
 
 @pipeline_def(
@@ -76,53 +150,9 @@ class PairDataset(torch.utils.data.IterableDataset):
     ):
         super().__init__()
         self.name = f"Reader{shard_id}"
-
-        with open(flist, "r") as file:
-            files = file.readlines()
-
-        for i in range(len(files)):
-            files[i] = files[i].strip("\n")
-
-        random.shuffle(files)
-
-        labels = [f.split("_") for f in files]
-        x_labels = [
-            convert_timestamp_to_periodic(int(os.path.basename(label[0])), fps=30)
-            for label in labels
-        ]
-        y_labels = [
-            convert_timestamp_to_periodic(int(os.path.basename(label[1])), fps=30)
-            for label in labels
-        ]
-        n = len(files)
-
-        globals().update(
-            {
-                "n": n,
-                "dir": dir,
-                "batch_size": batch_size,
-                "files": files,
-                "x_labels": x_labels,
-                "y_labels": y_labels,
-            }
-        )
-
-        def external_source(info):
-            idx = info.iteration
-            if idx + batch_size >= n:
-                idx = idx - n
-            batch = []
-            t_x = []
-            t_y = []
-            for i in range(batch_size):
-                f = open(dir + files[idx + i], "rb")
-                batch.append(np.frombuffer(f.read(), dtype=np.uint8))
-                t_x.append(np.array([x_labels[idx + i]], dtype=np.float32))
-                t_y.append(np.array([y_labels[idx + i]], dtype=np.float32))
-            return (batch, t_x, t_y)
-
+        # Read the file list
         pipe = img_pipe(
-            ext_source=external_source,
+            ext_source=ExternalInputCallable(flist, dir, batch_size),
             fill=fill,
             prefetch=prefetch,
             shuffle=shuffle,

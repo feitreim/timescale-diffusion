@@ -122,7 +122,7 @@ if __name__ == "__main__":
     # Hyperparameters
     batch_size = config["data"]["batch_size"]
     learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
-
+    warmup_steps = config["hp"]["warmup"] if "warmup_steps" in config["hp"] else 10000
     num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
     epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
     logging_rate = (
@@ -146,13 +146,14 @@ if __name__ == "__main__":
     model = torch.compile(model_unopt, **config["compile"])
     # optim
     optimizer = schedulefree.AdamWScheduleFree(
-        model_unopt.parameters(), lr=learning_rate
+        model_unopt.parameters(), lr=learning_rate, warmup_steps=warmup_steps
     )
 
     # ema of weights
     ema_id = random.randint(0, 2000000)
     ema_path = f"./.running_avgs/{ema_id}/"
     ema_beta = config["ema"]["beta"]
+    ema_enabled = config["ema"]["enabled"]
     ema_interval = config["ema"]["interval"]
     ema_start = config["ema"]["start"]
     Path(ema_path).mkdir(parents=True, exist_ok=True)
@@ -174,9 +175,9 @@ if __name__ == "__main__":
         wandb.log({"epoch": e})
         for batch_idx, batch in tqdm(enumerate(dataset)):
             training_step(batch_idx, batch)
-            if batch_idx % ema_interval == 0 and batch_idx > ema_start:
+            if batch_idx % ema_interval == 0 and batch_idx > ema_start and ema_enabled:
                 running_average_weights(model_unopt, ema_path, ema_beta)
-            elif batch_idx % ema_interval == 0:
+            elif batch_idx % ema_interval == 0 and ema_enabled:
                 torch.save(model_unopt, ema_path)
             if batch_idx >= epoch_size:
                 save_model(model_unopt)

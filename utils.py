@@ -46,7 +46,7 @@ def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
     """
     offset = offset_seconds * fps
     timestamp = t + offset
-    output_list = [int((timestamp % FRAMES[i]) / FRAMES[i]) for i in range(len(FRAMES))]
+    output_list = [(timestamp % FRAMES[i]) / FRAMES[i] for i in range(len(FRAMES))]
     return torch.as_tensor(output_list)
 
 

@@ -17,7 +17,7 @@ from data.pair_dali import PairDataset
 from diffusion_model import LTDM
 from losses.reconstructionLosses import MixReconstructionLoss
 from utils import unpack
-from losses.singularValueLoss import singular_value_loss_x, singular_value_loss_y
+from losses.singularValueLoss import singular_value_loss
 
 
 # -------------- Timestamp Predictor Loss
@@ -74,11 +74,11 @@ def training_step(batch_idx, batch):
     z_m = model.unet(z_m, t)
     embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
 
-    svd_x = singular_value_loss_x(z, t)
-    svd_y = singular_value_loss_y(z_m, t)
+    svd_x = singular_value_loss(z, t[:, 0])
+    svd_y = singular_value_loss(z_m, t[:, 1])
 
-    t_loss_x = timestamp_loss(z, t[0:7])
-    t_loss_y = timestamp_loss(z_m, t[7:])
+    t_loss_x = timestamp_loss(z, t[:, 0])
+    t_loss_y = timestamp_loss(z_m, t[:, 1])
 
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)

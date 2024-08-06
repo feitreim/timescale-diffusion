@@ -25,7 +25,7 @@ def get_frame_count(video_path):
 
     # Release the video object
     video.release()
-
+    del video
     return frame_count
 
 
