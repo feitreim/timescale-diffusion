@@ -7,7 +7,7 @@ import toml
 from tqdm import tqdm
 
 from vqvae.model import VQVAE
-from diffusion_model import LTDM
+from tspm.model import TSPM
 
 
 def collate_timescales(
@@ -36,6 +36,7 @@ FRAMES = [
     60 * 60 * 24 * 30.42 * 30.0,  # Month
     60 * 60 * 24 * 365.0 * 30.0,  # Year
 ]
+FRAME_TENSOR = torch.tensor(FRAMES)
 
 
 def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
@@ -50,8 +51,19 @@ def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
     return torch.as_tensor(output_list)
 
 
-def convert_timestamp_to_periodic_vec(t):
-    pass
+def convert_timestamp_to_periodic_vec(t: torch.Tensor, offset=0):
+    """
+    in:
+        t: [B, 1] or [B]
+        offset: int
+
+    out:
+        t: [B, 7]
+    """
+    t = t.squeeze() + offset
+    t = t.view(-1, 1)
+    t = torch.div(torch.fmod(t, FRAME_TENSOR), FRAME_TENSOR)
+    return t
 
 
 def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:
