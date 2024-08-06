@@ -17,7 +17,6 @@ from data.pair_dali import PairDataset
 from tspm.model import TSPM
 from losses.recon import MixReconstructionLoss
 from utils import unpack
-from losses.svd import singular_value_loss
 
 # -------------- Functions
 
@@ -63,13 +62,10 @@ def training_step(batch_idx, batch):
     z_m = model.unet(z_m, t)
     embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
 
-    svd_x = singular_value_loss(z, t[:, 0])
-    svd_y = singular_value_loss(z_m, t[:, 1])
-
     orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
 
-    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x + svd_x + svd_y
+    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x
 
     optimizer.zero_grad()
     loss.backward()
@@ -85,8 +81,6 @@ def training_step(batch_idx, batch):
                 "train/perplexity_y": perp_y.item(),
                 "train/embed_loss_x": embed_loss_x.item(),
                 "train/embed_loss_y": embed_loss_y.item(),
-                "train/svd_x": svd_x.item(),
-                "train/svd_y": svd_y.item(),
             }
         )
 

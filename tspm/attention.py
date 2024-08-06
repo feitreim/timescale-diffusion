@@ -19,7 +19,10 @@ class AttnBlock(nn.Module):
         self.q_proj = torch.nn.Parameter(
             torch.randn(1, e_dim, e_dim), requires_grad=True
         )
-        self.kv_proj = torch.nn.Parameter(
+        self.k_proj = torch.nn.Parameter(
+            torch.randn(1, e_dim, e_dim), requires_grad=True
+        )
+        self.v_proj = torch.nn.Parameter(
             torch.randn(1, e_dim, e_dim), requires_grad=True
         )
         self.attn_proj = torch.nn.Parameter(
@@ -35,15 +38,14 @@ class AttnBlock(nn.Module):
     """
 
     def forward(self, x: Tensor, t: Tensor):
-        shape = x.shape
-        x = x.view(shape[0], -1, self.e_dim)
-        x = x @ self.kv_proj
-        x_n = self.norm(x)
-        t = t.unsqueeze(1).expand(-1, x.shape[1], -1)
-        t = t @ self.q_proj
-        t = self.norm(t)
-        # let the output of sdpa be the residual (r) for x
-        r = f.scaled_dot_product_attention(t, x_n, x_n) @ self.attn_proj
+        B, S, shape = x.shape[0], x.shape[1], x.shape
+        x = x.view(B, -1, self.e_dim)
+        t = t.unsqueeze(1).expand(-1, S, -1)
+        q = self.norm(x @ self.q_proj)
+        k = self.norm(t @ self.k_proj)
+        v = self.norm(t @ self.v_proj)
+        # take the attention map (phi) and add it to (x)
+        r = f.scaled_dot_product_attention(q, k, v) @ self.attn_proj
         x = x + nn.functional.tanh(r)
         return x.view(*shape)
 
