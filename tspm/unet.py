@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 from typing import List
 
-from blocks.attention import AttnUp, AttnDown, AttnBlock
-from blocks.resnet import ResUp, ResDown
-from blocks.time import TimeEmbedding2D
+from tspm.attention import AttnUp, AttnDown, AttnBlock
+from tspm.resnet import ResUp, ResDown
+from tspm.time import TimeEmbedding2D
 
 
 class UNet(nn.Module):

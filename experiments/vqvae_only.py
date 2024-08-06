@@ -15,8 +15,8 @@ from torchmetrics.image import PeakSignalNoiseRatio
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
-from diffusion_model import LTDM
-from losses.reconstructionLosses import MixReconstructionLoss
+from tspm.model import TSPM
+from losses.recon import MixReconstructionLoss
 from utils import unpack
 
 # -------------- Functions
@@ -135,7 +135,7 @@ if __name__ == "__main__":
     )
 
     # Model(s)
-    model_unopt = LTDM(config["unet"], config["vqvae"])
+    model_unopt = TSPM(config["unet"], config["vqvae"])
     summary(
         model_unopt.unet,
         depth=4,

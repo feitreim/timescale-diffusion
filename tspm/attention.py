@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as f
 from torch import Tensor
 
-from blocks.resnet import ResBlock
+from tspm.resnet import ResBlock
 
 
 class AttnBlock(nn.Module):

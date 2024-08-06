@@ -1,7 +1,7 @@
 import torch.nn as nn
 from typing import Dict
 
-from blocks.unet import UNet
+from tspm.unet import UNet
 from vqvae.model import VQVAE
 
 """
@@ -17,7 +17,7 @@ from vqvae.model import VQVAE
 """
 
 
-class LTDM(nn.Module):
+class TSPM(nn.Module):
     def __init__(self, unet_config: Dict, vqvae_config: Dict):
         """
         Latent Time Diffusion Model

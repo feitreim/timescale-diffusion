@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from vqvae.models.residual import ResidualStack
+from vqvae.blocks.residual import ResidualStack
 
 
 class Encoder(nn.Module):
