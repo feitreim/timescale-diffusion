@@ -4,6 +4,7 @@ from pathlib import Path
 
 import schedulefree
 import toml
+import gc
 import torch
 import torch.nn as nn
 import torchvision
@@ -172,7 +173,10 @@ if __name__ == "__main__":
     summary(
         model_unopt.unet,
         depth=4,
-        input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)),
+        input_size=(
+            (batch_size, config["unet"]["in_dims"], 32, 32),
+            (batch_size, 2, 7),
+        ),
     )
     summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
 
@@ -201,19 +205,32 @@ if __name__ == "__main__":
 
     # dataset
     dataset = PairDataset(**config["data"])
-    # val_dataset = FrameDataset(**config['val_data'])
     # wandb
     wandb.init(project="timescale-diffusion", name=args.name)
     save_model(model_unopt)
 
-    for e in range(num_epochs):
+    e = 0
+    while e < num_epochs:
         wandb.log({"epoch": e})
-        for batch_idx, batch in tqdm(enumerate(dataset)):
-            training_step(batch_idx, batch)
-            if batch_idx % ema_interval == 0 and batch_idx > ema_start and ema_enabled:
-                running_average_weights(model_unopt, ema_path, ema_beta)
-            elif batch_idx % ema_interval == 0 and ema_enabled:
-                torch.save(model_unopt, ema_path)
-            if batch_idx >= epoch_size:
-                save_model(model_unopt)
-                break
+        try:
+            for batch_idx, batch in tqdm(enumerate(dataset)):
+                training_step(batch_idx, batch)
+                if (
+                    batch_idx % ema_interval == 0
+                    and batch_idx > ema_start
+                    and ema_enabled
+                ):
+                    running_average_weights(model_unopt, ema_path, ema_beta)
+                elif batch_idx % ema_interval == 0 and ema_enabled:
+                    torch.save(model_unopt, ema_path)
+                    if batch_idx >= epoch_size:
+                        save_model(model_unopt)
+                        break
+        except:  # noqa: E722
+            save_model(model_unopt)
+            del dataset
+            gc.collect()
+            dataset = PairDataset(**config["data"])
+            print("Dataloader crashed, restarting epoch.")
+        else:
+            e += 1

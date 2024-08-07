@@ -163,9 +163,9 @@ class PairDataset(torch.utils.data.IterableDataset):
             num_threads=num_threads,
             device_id=shard_id,
         )
-
+        self.pipe = pipe
         self.pipeline = pydali.DALIGenericIterator(
-            pipe, output_map=["frames", "t_x", "t_y"]
+            self.pipe, output_map=["frames", "t_x", "t_y"]
         )
         self.periodic = periodic
 
