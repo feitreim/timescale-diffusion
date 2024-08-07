@@ -2,7 +2,7 @@ import torch
 from torch import Tensor
 import wandb
 import os
-from typing import List, Tuple
+from typing import List, Tuple, Union
 import toml
 from tqdm import tqdm
 
@@ -53,6 +53,7 @@ def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
 
 def convert_timestamp_to_periodic_vec(t: torch.Tensor, offset=0):
     """
+    see convert_timestamp_to_periodic
     in:
         t: [B, 1] or [B]
         offset: int
@@ -110,13 +111,18 @@ def load_frozen_vqvae(name: str):
     return vqvae
 
 
-def load_model_from_artifact(artifact, map_device="cuda"):
+def load_model_from_artifact(artifact, map_device: Union[str, torch.device] = "cuda"):
     state_dict_path, arg_dict_path = download_artifact(artifact)
     config = toml.load(arg_dict_path)
-    model = LTDM(config["unet"], config["vqvae"])
-    state_dict = torch.load(
-        state_dict_path, weights_only=False, map_location=torch.device(map_device)
-    )
+    model = TSPM(config["unet"], config["vqvae"])
+    if isinstance(map_device, str):
+        state_dict = torch.load(
+            state_dict_path, weights_only=False, map_location=torch.device(map_device)
+        )
+    else:
+        state_dict = torch.load(
+            state_dict_path, weights_only=False, map_location=map_device
+        )
     model.load_state_dict(state_dict)
     return model
 

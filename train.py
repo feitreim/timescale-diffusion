@@ -2,21 +2,21 @@ import argparse
 import random
 from pathlib import Path
 
+import schedulefree
 import toml
 import torch
 import torch.nn as nn
 import torchvision
 import torchvision.transforms.v2 as v2
 import wandb
-import schedulefree
 from torchinfo import summary
 from torchmetrics.image import PeakSignalNoiseRatio
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
-from tspm.model import TSPM
 from losses.recon import MixReconstructionLoss
-from utils import unpack
+from tspm.model import TSPM
+from utils import load_model_from_artifact, unpack
 
 # -------------- Functions
 
@@ -162,15 +162,23 @@ if __name__ == "__main__":
     )
 
     # Model(s)
-    model_unopt = TSPM(config["unet"], config["vqvae"])
+    if not config["hp"]["artifact"] == "none":
+        model_unopt = load_model_from_artifact(
+            config["hp"]["artifact"], map_device=device
+        )
+    else:
+        model_unopt = TSPM(config["unet"], config["vqvae"])
+
     summary(
         model_unopt.unet,
         depth=4,
         input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)),
     )
     summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
+
     model_unopt = model_unopt.to(device)
     model = torch.compile(model_unopt, **config["compile"])
+
     # optim
     optimizer = schedulefree.AdamWScheduleFree(
         model_unopt.parameters(), lr=learning_rate, warmup_steps=warmup_steps

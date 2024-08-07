@@ -2,16 +2,18 @@
 lr = 1e-3
 warmup = 50000
 num_epochs = 10
-epoch_size = 200000
+epoch_size = 362500
 img_logging_rate = 20000
 masking = true
 masking_factor = 0.9
 masking_size = 4
+artifact = "none"
+
 
 [ema]
-enabled = false
-beta = 0.99
-interval = 250000
+enabled = true
+beta = 0.9
+interval = 75
 start = 250000
 
 [unet]
@@ -33,7 +35,7 @@ n_res_layers = 4
 n_embeddings = 1024
 stacks = 2
 embedding_dim = 64
-beta = 0.6
+beta = 0.5
 
 [compile]
 fullgraph = true
@@ -44,7 +46,7 @@ flist = "/cluster/research-groups/wehrwein/webcam/geiranger/allframes/filelist.t
 dir = "/cluster/research-groups/wehrwein/webcam/geiranger/allframes/"
 periodic = true
 batch_size = 32
-num_threads = 1
+num_threads = 2
 fill = 5000
 prefetch = 4
 shuffle = true

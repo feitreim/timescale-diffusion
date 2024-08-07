@@ -14,20 +14,20 @@ from torchmetrics.image import PeakSignalNoiseRatio
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
-from diffusion_model import LTDM
-from losses.reconstructionLosses import MixReconstructionLoss
+from tspm.model import TSPM
+from losses.recon import MixReconstructionLoss
 from utils import unpack
-from losses.singularValueLoss import singular_value_loss
 
 
 # -------------- Timestamp Predictor Loss
 class timestampLoss(nn.Module):
     def __init__(self, embed_dim, in_dims):
+        super().__init__()
         weight = torch.randn(1, embed_dim * in_dims * in_dims, 7)
         self.weight = torch.nn.Parameter(weight, requires_grad=True)
 
-    def forward(self, x, t):
-        return ((x @ self.weight) - t).mean()
+    def forward(self, x: torch.Tensor, t):
+        return torch.pow(((x.flatten(1) @ self.weight) - t), 2.0).mean()
 
 
 # -------------- Functions
@@ -74,9 +74,6 @@ def training_step(batch_idx, batch):
     z_m = model.unet(z_m, t)
     embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
 
-    svd_x = singular_value_loss(z, t[:, 0])
-    svd_y = singular_value_loss(z_m, t[:, 1])
-
     t_loss_x = timestamp_loss(z, t[:, 0])
     t_loss_y = timestamp_loss(z_m, t[:, 1])
 
@@ -88,10 +85,7 @@ def training_step(batch_idx, batch):
         + pred_loss
         + embed_loss_y
         + embed_loss_x
-        + svd_x
-        + svd_y
-        + t_loss_x
-        + t_loss_y
+        + (timescale_alpha * (t_loss_x + t_loss_y))
     )
 
     optimizer.zero_grad()
@@ -108,8 +102,6 @@ def training_step(batch_idx, batch):
                 "train/perplexity_y": perp_y.item(),
                 "train/embed_loss_x": embed_loss_x.item(),
                 "train/embed_loss_y": embed_loss_y.item(),
-                "train/svd_x": svd_x.item(),
-                "train/svd_y": svd_y.item(),
                 "train/timestamp_loss_x": t_loss_x.item(),
                 "train/timestamp_loss_y": t_loss_y.item(),
             }
@@ -179,6 +171,9 @@ if __name__ == "__main__":
     masking_factor = (
         config["hp"]["masking_factor"] if "masking_factor" in config["hp"] else 0.9
     )
+    timescale_alpha = (
+        config["hp"]["timescale_alpha"] if "timescale_alpha" in config["hp"] else 0.15
+    )
 
     num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
     epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
@@ -192,7 +187,7 @@ if __name__ == "__main__":
     )
 
     # Model(s)
-    model_unopt = LTDM(config["unet"], config["vqvae"])
+    model_unopt = TSPM(config["unet"], config["vqvae"])
     summary(
         model_unopt.unet,
         depth=4,
@@ -201,10 +196,6 @@ if __name__ == "__main__":
     summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
     model_unopt = model_unopt.to(device)
     model = torch.compile(model_unopt, **config["compile"])
-    # optim
-    optimizer = schedulefree.AdamWScheduleFree(
-        model_unopt.parameters(), lr=learning_rate
-    )
 
     # ema of weights
     ema_id = random.randint(0, 2000000)
@@ -217,9 +208,17 @@ if __name__ == "__main__":
     torch.save(model_unopt, ema_path)
 
     # loss
-    timestamp_loss = timestampLoss(64, 16)
+    timestamp_loss = timestampLoss(64, 16).to(device)
     ssim_loss = MixReconstructionLoss()
     psnr = PeakSignalNoiseRatio()
+
+    # optim
+    params = []
+    params += model_unopt.parameters()
+    params += timestamp_loss.parameters()
+    optimizer = schedulefree.AdamWScheduleFree(
+        params, lr=learning_rate, warmup_steps=50000
+    )
 
     # dataset
     dataset = PairDataset(**config["data"])
