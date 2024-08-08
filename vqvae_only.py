@@ -1,7 +1,9 @@
 import argparse
+import gc
 import random
 from pathlib import Path
 
+import schedulefree
 import toml
 import torch
 import torch.nn as nn
@@ -9,15 +11,15 @@ import torch.optim as optim
 import torchvision
 import torchvision.transforms.v2 as v2
 import wandb
-import schedulefree
 from torchinfo import summary
 from torchmetrics.image import PeakSignalNoiseRatio
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
-from tspm.model import TSPM
 from losses.recon import MixReconstructionLoss
+from losses.svd import singular_value_loss
 from utils import unpack
+from vqvae.model import VQVAE
 
 # -------------- Functions
 
@@ -34,17 +36,14 @@ def save_model(model):
 
 
 def training_step(batch_idx, batch):
-    x, y, t = unpack(batch, device)
+    x, _, t = unpack(batch, device)
+    t = t[:, 0]
+    embed_loss_x, x_hat, perp_x, z = model(x)
 
-    z = model.generate_latent(x)
-    embed_loss_x, x_hat, perp_x, _ = model.generate_output_from_latent(z)
-
-    z_y = model.generate_latent(y)
-    embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_y)
     orig_loss = ssim_loss(x_hat, x)
-    pred_loss = ssim_loss(y_hat, y)
+    svd_loss = singular_value_loss(z, t)
 
-    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x
+    loss = orig_loss + embed_loss_x + (0.1 * svd_loss)
 
     optimizer.zero_grad()
     loss.backward()
@@ -54,12 +53,10 @@ def training_step(batch_idx, batch):
         wandb.log(
             {
                 "train/loss": loss.item(),
-                "train/orig_loss": orig_loss.item(),
-                "train/pred_loss": pred_loss.item(),
-                "train/perplexity_x": perp_x.item(),
-                "train/perplexity_y": perp_y.item(),
-                "train/embed_loss_x": embed_loss_x.item(),
-                "train/embed_loss_y": embed_loss_y.item(),
+                "train/recon_loss": orig_loss.item(),
+                "train/perplexity": perp_x.item(),
+                "train/svd_loss": svd_loss.item(),
+                "train/embed_loss": embed_loss_x.item(),
             }
         )
 
@@ -135,13 +132,12 @@ if __name__ == "__main__":
     )
 
     # Model(s)
-    model_unopt = TSPM(config["unet"], config["vqvae"])
+    model_unopt = VQVAE(**config["vqvae"])
     summary(
-        model_unopt.unet,
+        model_unopt,
         depth=4,
-        input_size=((batch_size, 64, 16, 16), (batch_size, 2, 7)),
+        input_size=(batch_size, 3, 256, 256),
     )
-    summary(model_unopt.vae, input_size=(batch_size, 3, 256, 256))
     model_unopt = model_unopt.to(device)
     model = torch.compile(model_unopt, **config["compile"])
     # optim
@@ -170,15 +166,28 @@ if __name__ == "__main__":
     # wandb
     wandb.init(project="timescale-diffusion", name=args.name)
     save_model(model_unopt)
-
-    for e in range(num_epochs):
+    e = 0
+    while e < num_epochs:
         wandb.log({"epoch": e})
-        for batch_idx, batch in tqdm(enumerate(dataset)):
-            training_step(batch_idx, batch)
-            if batch_idx % ema_interval == 0 and batch_idx > ema_start and ema_enabled:
-                running_average_weights(model_unopt, ema_path, ema_beta)
-            elif batch_idx % ema_interval == 0 and ema_enabled:
-                torch.save(model_unopt, ema_path)
-            if batch_idx >= epoch_size:
-                save_model(model_unopt)
-                break
+        try:
+            for batch_idx, batch in tqdm(enumerate(dataset)):
+                training_step(batch_idx, batch)
+                if (
+                    batch_idx % ema_interval == 0
+                    and batch_idx > ema_start
+                    and ema_enabled
+                ):
+                    running_average_weights(model_unopt, ema_path, ema_beta)
+                elif batch_idx % ema_interval == 0 and ema_enabled:
+                    torch.save(model_unopt, ema_path)
+                    if batch_idx >= epoch_size:
+                        save_model(model_unopt)
+                        break
+        except:  # noqa: E722
+            save_model(model_unopt)
+            del dataset
+            gc.collect()
+            dataset = PairDataset(**config["data"])
+            print("Dataloader crashed, restarting epoch.")
+        else:
+            e += 1
