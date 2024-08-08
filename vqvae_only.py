@@ -1,25 +1,25 @@
 import argparse
-import gc
 import random
 from pathlib import Path
 
-import schedulefree
 import toml
+import gc
 import torch
 import torch.nn as nn
 import torch.optim as optim
 import torchvision
 import torchvision.transforms.v2 as v2
 import wandb
+import schedulefree
 from torchinfo import summary
 from torchmetrics.image import PeakSignalNoiseRatio
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
-from losses.recon import MixReconstructionLoss
-from losses.svd import singular_value_loss
-from utils import unpack
 from vqvae.model import VQVAE
+from losses.recon import MixReconstructionLoss
+from utils import unpack
+from losses.svd import singular_value_loss
 
 # -------------- Functions
 
