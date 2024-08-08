@@ -42,8 +42,7 @@ def training_step(batch_idx, batch):
 
     orig_loss = ssim_loss(x_hat, x)
     svd_loss = singular_value_loss(z, t)
-
-    loss = orig_loss + embed_loss_x + (0.1 * svd_loss)
+    loss = orig_loss + embed_loss_x + (svd_alpha * svd_loss)
 
     optimizer.zero_grad()
     loss.backward()
@@ -64,7 +63,7 @@ def training_step(batch_idx, batch):
         caption = (
             "left: input, mid left: recon orig, mid right: recon target, right: target"
         )
-        mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
+        mosaic = torch.cat([x[:4], x_hat[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
@@ -121,6 +120,7 @@ if __name__ == "__main__":
     learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
     warmup_steps = config["hp"]["warmup"] if "warmup_steps" in config["hp"] else 10000
     num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
+    svd_alpha = config["hp"]["svd_alpha"] if "svd_alpha" in config["hp"] else 0.1
     epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
     logging_rate = (
         config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
