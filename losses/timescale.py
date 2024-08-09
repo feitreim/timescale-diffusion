@@ -277,14 +277,13 @@ class TimescaleLoss(torch.nn.Module):
             ], "LOSS INTIIALIZATION ERROR: Unknown distance metric type requested."
 
 
-
 def periodic_loss(z, t, w, w2):
-    r'''
+    r"""
     z: [B C H W]
     t: [B T] T=7
     w: weight of shape: [B T H 1]
     w2: [B T 1 W]
-    '''
+    """
     _, T = t.shape
     inter = z[:, :T] @ w
 

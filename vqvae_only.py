@@ -6,13 +6,15 @@ import toml
 import gc
 import torch
 import torch.nn as nn
-import torch.optim as optim
-import torchvision
-import torchvision.transforms.v2 as v2
 import wandb
 import schedulefree
 from torchinfo import summary
-from torchmetrics.image import PeakSignalNoiseRatio
+from torchmetrics.image import (
+    PeakSignalNoiseRatio,
+    FrechetInceptionDistance,
+    StructuralSimilarityIndexMeasure,
+    MultiScaleStructuralSimilarityIndexMeasure,
+)
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
@@ -49,6 +51,11 @@ def training_step(batch_idx, batch):
     optimizer.step()
 
     if batch_idx % logging_rate == 0:
+        psnr_x = psnr(x_hat, x)
+        fid_x = fid(x_hat, x)
+        ssim_x = ssim(x_hat, x)
+        msssim_x = ms_ssim(x_hat, x)
+
         wandb.log(
             {
                 "train/loss": loss.item(),
@@ -56,6 +63,10 @@ def training_step(batch_idx, batch):
                 "train/perplexity": perp_x.item(),
                 "train/svd_loss": svd_loss.item(),
                 "train/embed_loss": embed_loss_x.item(),
+                "train/psnr": psnr_x.item(),
+                "train/fid": fid_x.item(),
+                "train/ssim": ssim_x.item(),
+                "train/ms-ssim": msssim_x.item(),
             }
         )
 
@@ -158,7 +169,12 @@ if __name__ == "__main__":
 
     # loss
     ssim_loss = MixReconstructionLoss()
+
+    # img quality metrics
     psnr = PeakSignalNoiseRatio()
+    fid = FrechetInceptionDistance()
+    ssim = StructuralSimilarityIndexMeasure()
+    ms_ssim = MultiScaleStructuralSimilarityIndexMeasure()
 
     # dataset
     dataset = PairDataset(**config["data"])

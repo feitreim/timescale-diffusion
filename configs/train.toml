@@ -11,7 +11,7 @@ artifact = "none"
 
 
 [ema]
-enabled = true
+enabled = false
 beta = 0.9
 interval = 1000
 start = 250000
@@ -34,7 +34,7 @@ res_h_dim = 64
 n_res_layers = 4
 n_embeddings = 1024
 stacks = 3
-embedding_dim = 16
+embedding_dim = 7
 beta = 0.5
 
 [compile]
