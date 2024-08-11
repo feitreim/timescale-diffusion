@@ -6,6 +6,7 @@ import toml
 import gc
 import torch
 import torch.nn as nn
+import torch.nn.functional as fn
 import wandb
 import schedulefree
 from torchinfo import summary
@@ -17,10 +18,90 @@ from torchmetrics.image import (
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
-from vqvae.model import VQVAE
 from losses.recon import MixReconstructionLoss
 from utils import unpack
-from losses.svd import singular_value_loss
+from tspm.time import TimeEmbedding1D
+from vqvae.blocks.encoder import Encoder
+from vqvae.blocks.quantizer import VectorQuantizer
+from vqvae.blocks.decoder import Decoder
+
+
+# -------------- Model
+
+
+class TSCVQVAE(nn.Module):
+    def __init__(
+        self, h_dim, res_h_dim, n_res_layers, stacks, n_embeddings, embedding_dim, beta
+    ) -> None:
+        super().__init__()
+        self.encoder = Encoder(3, h_dim, n_res_layers, res_h_dim, stacks)
+        # decently big kernel than a big dilated conv.
+        self.pre_latent_kernels = nn.ParameterDict(
+            {
+                "k1": nn.Parameter(
+                    torch.randn((h_dim, h_dim, 1, 1)), requires_grad=True
+                ),
+                "k2": nn.Parameter(
+                    torch.randn((h_dim // 2, h_dim, 5, 5)), requires_grad=True
+                ),
+                "k3": nn.Parameter(
+                    torch.randn((h_dim // 4, h_dim // 2, 9, 9)), requires_grad=True
+                ),
+            }
+        )
+        # caclulate the spatial dim
+        s = 256
+        psd = [s := s // 2 for _ in range(stacks + 2)]
+        in_feat = (h_dim // 4) * (psd[-1] * psd[-1])
+        self.latent_dense = nn.Linear(in_feat, 7)
+        self.embed = TimeEmbedding1D(7, 64)
+        self.out_latent_dense = nn.Linear(64, 7168)  # 7168 = (32*32) * 7
+        self.e_dim = embedding_dim
+        self.pre_quantization_conv = nn.Parameter(
+            torch.randn((7, embedding_dim, 1, 1)), requires_grad=True
+        )
+        self.vq = VectorQuantizer(n_embeddings, embedding_dim, beta)
+        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks)
+
+    def forward(self, x):
+        B = x.shape[0]
+        z = self.encoder(x)
+        z_t = self.to_latent(z)
+        z_e = self.embed(z_t)
+        z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
+        z_spatial = z_spatial.view(B, 7, 32, 32)
+        z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
+        embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
+        x_hat = self.decoder(z_q)
+        return embedding_loss, x_hat, perplexity, z_t
+
+    def to_latent(self, z):
+        z = fn.leaky_relu(fn.conv2d(z, self.pre_latent_kernels["k1"], padding="same"))
+        z = fn.leaky_relu(
+            fn.conv2d(z, self.pre_latent_kernels["k2"], padding=2, stride=2)
+        )
+        z = fn.leaky_relu(
+            fn.conv2d(z, self.pre_latent_kernels["k3"], padding=8, dilation=2, stride=2)
+        )
+        return fn.sigmoid(self.latent_dense(z.flatten(1)))
+
+    @torch.compile(mode="max-autotune", fullgraph=True)
+    def generate_timecode(self, x):
+        z = self.encoder(x)
+        t_hat = self.to_latent(z)
+        return t_hat
+
+    @torch.compile(mode="max-autotune", fullgraph=True)
+    def generate_image_from_timecode(self, t):
+        B = t.shape[0]
+        z_e = self.embed(t)
+        z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
+        z_spatial = z_spatial.view(B, 7, 32, 32)
+        z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
+        embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
+        x_hat = self.decoder(z_q)
+        return embedding_loss, x_hat, perplexity, z_spatial
+
 
 # -------------- Functions
 
@@ -39,15 +120,17 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, _, t = unpack(batch, device)
     t = t[:, 0]
-    embed_loss_x, x_hat, perp_x, z = model(x)
 
+    t_hat = model.generate_timecode(x)
+    embed_loss_x, x_hat, perp_x, z = model.generate_image_from_timecode(t_hat)
+
+    time_loss = torch.pow((t - t_hat) * time_loss_scalar, 2.0).mean()
     orig_loss = ssim_loss(x_hat, x)
-    svd_loss = singular_value_loss(z, t)
-    loss = orig_loss + embed_loss_x + (svd_alpha * svd_loss)
+    loss = orig_loss + embed_loss_x + time_loss
 
-    optimizer.zero_grad()
+    optim.zero_grad()
     loss.backward()
-    optimizer.step()
+    optim.step()
 
     if batch_idx % logging_rate == 0:
         psnr_x = psnr(x_hat, x)
@@ -59,8 +142,8 @@ def training_step(batch_idx, batch):
                 "train/loss": loss.item(),
                 "train/recon_loss": orig_loss.item(),
                 "train/perplexity": perp_x.item(),
-                "train/svd_loss": svd_loss.item(),
                 "train/embed_loss": embed_loss_x.item(),
+                "train/time_loss": time_loss.item(),
                 "train/psnr": psnr_x.item(),
                 "train/ssim": ssim_x.item(),
                 "train/ms-ssim": msssim_x.item(),
@@ -140,17 +223,17 @@ if __name__ == "__main__":
     )
 
     # Model(s)
-    model_unopt = VQVAE(**config["vqvae"])
+    model = TSCVQVAE(**config["vqvae"])
     summary(
-        model_unopt,
+        model,
         depth=4,
         input_size=(batch_size, 3, 256, 256),
     )
-    model_unopt = model_unopt.to(device)
-    model = torch.compile(model_unopt, **config["compile"])
+    model = model.to(device)
+
     # optim
-    optimizer = schedulefree.AdamWScheduleFree(
-        model_unopt.parameters(), lr=learning_rate, warmup_steps=warmup_steps
+    optim = schedulefree.AdamWScheduleFree(
+        model.parameters(), lr=learning_rate, warmup_steps=warmup_steps
     )
 
     # ema of weights
@@ -162,10 +245,12 @@ if __name__ == "__main__":
     ema_start = config["ema"]["start"]
     Path(ema_path).mkdir(parents=True, exist_ok=True)
     ema_path = Path(ema_path) / "lastweight.ckpt"
-    torch.save(model_unopt, ema_path)
+    torch.save(model, ema_path)
 
     # loss
     ssim_loss = MixReconstructionLoss()
+    time_loss_scalar = torch.as_tensor([0, 0.01, .25, 0.5, 1.0, 1.0, 1.0], device=device).view(1, -1)
+    time_loss_warmup = 0.0
 
     # img quality metrics
     psnr = PeakSignalNoiseRatio().to(device)
@@ -177,7 +262,7 @@ if __name__ == "__main__":
     # val_dataset = FrameDataset(**config['val_data'])
     # wandb
     wandb.init(project="timescale-diffusion", name=args.name)
-    save_model(model_unopt)
+    save_model(model)
     e = 0
     while e < num_epochs:
         wandb.log({"epoch": e})
@@ -189,15 +274,17 @@ if __name__ == "__main__":
                     and batch_idx > ema_start
                     and ema_enabled
                 ):
-                    running_average_weights(model_unopt, ema_path, ema_beta)
+                    running_average_weights(model, ema_path, ema_beta)
                 elif batch_idx % ema_interval == 0 and ema_enabled:
-                    torch.save(model_unopt, ema_path)
+                    torch.save(model, ema_path)
+                if batch_idx % 1000 and batch_idx < 11500 and batch_idx != 0:
+                    time_loss_warmup += 0.1
                 if batch_idx >= epoch_size:
-                    save_model(model_unopt)
+                    save_model(model)
                     break
         except Exception as ex:  # noqa: E722
             print(ex)
-            save_model(model_unopt)
+            save_model(model)
             del dataset
             gc.collect()
             dataset = PairDataset(**config["data"])

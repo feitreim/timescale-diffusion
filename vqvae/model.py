@@ -5,6 +5,17 @@ from vqvae.blocks.decoder import Decoder
 
 
 class VQVAE(nn.Module):
+    """
+    args:
+        - h_dim: hidden dims
+        - res_h_dim: hidden dims inside the residual layers
+        - n_res_layers: how many residual layers inside of each
+        - stacks: number of up/down sampling steps within the enc and dec
+        - n_embeddings: codebook size
+        - embedding_dim: size of each codebook entry
+        - beta: commitment loss term
+    """
+
     def __init__(
         self,
         h_dim,

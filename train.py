@@ -223,10 +223,11 @@ if __name__ == "__main__":
                     running_average_weights(model_unopt, ema_path, ema_beta)
                 elif batch_idx % ema_interval == 0 and ema_enabled:
                     torch.save(model_unopt, ema_path)
-                    if batch_idx >= epoch_size:
-                        save_model(model_unopt)
-                        break
-        except:  # noqa: E722
+                if batch_idx >= epoch_size:
+                    save_model(model_unopt)
+                    break
+        except Exception as ex:
+            print(ex)
             save_model(model_unopt)
             del dataset
             gc.collect()

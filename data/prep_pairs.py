@@ -62,7 +62,7 @@ def process_pair(l, r, max_distance, step, offset, root):
             l_video.seek((i + distance) / fps)
             r_frame = next(l_video)["data"]
         combined = torch.cat([l_frame, r_frame], dim=-1)
-        fname = sub_dir / f"{offset+i}_{offset+i+distance}"
+        fname = sub_dir / f"{offset+i}_{offset+i+distance}.jpg"
         torchvision.io.write_jpeg(combined, fname, quality=100)
         i += step + random.randint(-step // 2, step // 2)
         total += 1
@@ -134,10 +134,18 @@ def main():
     args = parser.parse_args()
     config = toml.decoder.load(args.config_file)
 
-    lhs_vids = config["lhs_videos"]
-    rhs_vids = config["rhs_videos"]
-    offsets = compute_frame_timestamps(lhs_vids[0], lhs_vids)
-    assert len(lhs_vids) == len(rhs_vids)
+    vids = config["videos"]
+    offsets = compute_frame_timestamps(vids[0], vids)
+    print(offsets)
+
+    lhs_vids = []
+    rhs_vids = []
+    for i in range(len(vids) - 1):
+        if abs((offsets[i] + 432000) - offsets[i + 1]) <= 50000:
+            lhs_vids.append(vids[i])
+            rhs_vids.append(vids[i + 1])
+
+    print(f"matches {len(lhs_vids)}")
 
     # sharding
     shard_size = len(lhs_vids) // args.num_shards
@@ -152,7 +160,7 @@ def main():
 
     print(f"shard size: {shard_size}, s: {start}, e: {end}")
 
-    with mp.Pool(8) as pool:
+    with mp.Pool(4) as pool:
         result_queue = mp.Manager().Queue()
         args_list = [
             (

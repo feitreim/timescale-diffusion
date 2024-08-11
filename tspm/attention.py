@@ -31,13 +31,12 @@ class AttnBlock(nn.Module):
         self.e_dim = e_dim
         self.norm = nn.LayerNorm(e_dim)
 
-    """
-    input shapes:
-        -- x => (B, C, H, W)
-        -- t => (B, e_dim)
-    """
-
     def forward(self, x: Tensor, t: Tensor):
+        """
+        input shapes:
+            -- x => (B, C, H, W)
+            -- t => (B, e_dim)
+        """
         B, S, shape = x.shape[0], x.shape[1], x.shape
         x = x.view(B, -1, self.e_dim)
         t = t.unsqueeze(1).expand(-1, S, -1)

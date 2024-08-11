@@ -41,7 +41,11 @@ class ExternalInputCallable:
         df = df.with_columns(
             [
                 plr.col("filename").str.split("_").list.get(0).alias("x_label"),
-                plr.col("filename").str.split("_").list.get(1).alias("y_label"),
+                plr.col("filename")
+                .str.split("_")
+                .list.get(1)
+                .str.strip_suffix(".jpg")
+                .alias("y_label"),
             ]
         )
         df = df.with_columns(
