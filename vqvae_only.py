@@ -21,6 +21,7 @@ from vqvae.model import VQVAE
 from losses.recon import MixReconstructionLoss
 from utils import unpack
 from losses.svd import singular_value_loss
+from losses.structure_loss import StructureLoss
 
 # -------------- Functions
 
@@ -39,11 +40,11 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, _, t = unpack(batch, device)
     t = t[:, 0]
-    embed_loss_x, x_hat, perp_x, z = model(x)
+    embed_loss_x, x_u, perp_x, z = model(x)
 
-    orig_loss = ssim_loss(x_hat, x)
-    svd_loss = singular_value_loss(z, t)
-    loss = orig_loss + embed_loss_x + (svd_alpha * svd_loss)
+    struct_loss, x_hat = structure_loss(t, x_u, x)
+    # orig_loss = ssim_loss(x_hat, x)
+    loss = embed_loss_x + struct_loss
 
     optimizer.zero_grad()
     loss.backward()
@@ -57,9 +58,9 @@ def training_step(batch_idx, batch):
         wandb.log(
             {
                 "train/loss": loss.item(),
-                "train/recon_loss": orig_loss.item(),
+                #            "train/recon_loss": orig_loss.item(),
                 "train/perplexity": perp_x.item(),
-                "train/svd_loss": svd_loss.item(),
+                "train/structure_loss": struct_loss.item(),
                 "train/embed_loss": embed_loss_x.item(),
                 "train/psnr": psnr_x.item(),
                 "train/ssim": ssim_x.item(),
@@ -71,7 +72,7 @@ def training_step(batch_idx, batch):
         caption = (
             "left: input, mid left: recon orig, mid right: recon target, right: target"
         )
-        mosaic = torch.cat([x[:4], x_hat[:4]], dim=-1)
+        mosaic = torch.cat([x[:4], x_u[:4], x_hat[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
@@ -148,6 +149,10 @@ if __name__ == "__main__":
     )
     model_unopt = model_unopt.to(device)
     model = torch.compile(model_unopt, **config["compile"])
+
+    for param in model_unopt.decoder.parameters():
+        torch.nn.init.zeros_(param.data)
+
     # optim
     optimizer = schedulefree.AdamWScheduleFree(
         model_unopt.parameters(), lr=learning_rate, warmup_steps=warmup_steps
@@ -166,6 +171,7 @@ if __name__ == "__main__":
 
     # loss
     ssim_loss = MixReconstructionLoss()
+    structure_loss = StructureLoss(config["structure_loss"]["artifact"], device, 32, 4)
 
     # img quality metrics
     psnr = PeakSignalNoiseRatio().to(device)

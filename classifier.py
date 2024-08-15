@@ -19,7 +19,7 @@ from tqdm import tqdm
 
 from data.pair_dali import PairDataset
 from losses.recon import MixReconstructionLoss
-from utils import unpack
+from utils import unpack, convert_timestamp_to_periodic_vec
 from tspm.time import TimeEmbedding1D
 from vqvae.blocks.encoder import Encoder
 from vqvae.blocks.quantizer import VectorQuantizer
@@ -35,27 +35,12 @@ class TSCVQVAE(nn.Module):
     ) -> None:
         super().__init__()
         self.encoder = Encoder(3, h_dim, n_res_layers, res_h_dim, stacks)
-        # decently big kernel than a big dilated conv.
-        self.pre_latent_kernels = nn.ParameterDict(
-            {
-                "k1": nn.Parameter(
-                    torch.randn((h_dim, h_dim, 1, 1)), requires_grad=True
-                ),
-                "k2": nn.Parameter(
-                    torch.randn((h_dim // 2, h_dim, 5, 5)), requires_grad=True
-                ),
-                "k3": nn.Parameter(
-                    torch.randn((h_dim // 4, h_dim // 2, 9, 9)), requires_grad=True
-                ),
-            }
-        )
-        # caclulate the spatial dim
-        s = 256
-        psd = [s := s // 2 for _ in range(stacks + 2)]
-        in_feat = (h_dim // 4) * (psd[-1] * psd[-1])
+        s = 256  # Calculate the future spatial dim
+        psd = [s := s // 2 for _ in range(stacks)]
+        in_feat = (h_dim) * (psd[-1] * psd[-1])
         self.latent_dense = nn.Linear(in_feat, 7)
         self.embed = TimeEmbedding1D(7, 64)
-        self.out_latent_dense = nn.Linear(64, 7168)  # 7168 = (32*32) * 7
+        self.out_latent_dense = nn.Linear(64, 1792)
         self.e_dim = embedding_dim
         self.pre_quantization_conv = nn.Parameter(
             torch.randn((7, embedding_dim, 1, 1)), requires_grad=True
@@ -69,21 +54,14 @@ class TSCVQVAE(nn.Module):
         z_t = self.to_latent(z)
         z_e = self.embed(z_t)
         z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
-        z_spatial = z_spatial.view(B, 7, 32, 32)
+        z_spatial = z_spatial.view(B, 7, 16, 16)
         z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
         embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
         x_hat = self.decoder(z_q)
         return embedding_loss, x_hat, perplexity, z_t
 
     def to_latent(self, z):
-        z = fn.leaky_relu(fn.conv2d(z, self.pre_latent_kernels["k1"], padding="same"))
-        z = fn.leaky_relu(
-            fn.conv2d(z, self.pre_latent_kernels["k2"], padding=2, stride=2)
-        )
-        z = fn.leaky_relu(
-            fn.conv2d(z, self.pre_latent_kernels["k3"], padding=8, dilation=2, stride=2)
-        )
-        return fn.sigmoid(self.latent_dense(z.flatten(1)))
+        return fn.tanh(self.latent_dense(z.flatten(1)))
 
     @torch.compile(mode="max-autotune", fullgraph=True)
     def generate_timecode(self, x):
@@ -96,11 +74,19 @@ class TSCVQVAE(nn.Module):
         B = t.shape[0]
         z_e = self.embed(t)
         z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
-        z_spatial = z_spatial.view(B, 7, 32, 32)
+        z_spatial = z_spatial.view(B, 7, 16, 16)
         z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
         embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
         x_hat = self.decoder(z_q)
         return embedding_loss, x_hat, perplexity, z_spatial
+
+    def generate_sequence(self, start, end, step):
+        images = []
+        for t in tqdm(range(start, end, step)):
+            time = convert_timestamp_to_periodic_vec(torch.as_tensor([t]))
+            _, img, _, _ = self.generate_image_from_timecode(time)
+            images.append(img)
+        return torch.cat(images, dim=0)
 
 
 # -------------- Functions
@@ -122,7 +108,7 @@ def training_step(batch_idx, batch):
     t = t[:, 0]
 
     t_hat = model.generate_timecode(x)
-    embed_loss_x, x_hat, perp_x, z = model.generate_image_from_timecode(t_hat)
+    embed_loss_x, x_hat, perp_x, z = model.generate_image_from_timecode(t)
 
     time_loss = torch.pow((t - t_hat) * time_loss_scalar, 2.0).mean()
     orig_loss = ssim_loss(x_hat, x)
@@ -249,7 +235,9 @@ if __name__ == "__main__":
 
     # loss
     ssim_loss = MixReconstructionLoss()
-    time_loss_scalar = torch.as_tensor([0, 0.01, .25, 0.5, 1.0, 1.0, 1.0], device=device).view(1, -1)
+    time_loss_scalar = torch.as_tensor(
+        [0.1, 0.1, 0.25, 0.5, 1.0, 1.0, 1.0], device=device
+    ).view(1, -1)
     time_loss_warmup = 0.0
 
     # img quality metrics
