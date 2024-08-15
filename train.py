@@ -11,7 +11,11 @@ import torchvision
 import torchvision.transforms.v2 as v2
 import wandb
 from torchinfo import summary
-from torchmetrics.image import PeakSignalNoiseRatio
+from torchmetrics.image import (
+    PeakSignalNoiseRatio,
+    StructuralSimilarityIndexMeasure,
+    MultiScaleStructuralSimilarityIndexMeasure,
+)
 from tqdm import tqdm
 
 from data.pair_dali import PairDataset
@@ -56,32 +60,35 @@ def training_step(batch_idx, batch):
     else:
         x_m = x
 
-    z = model.generate_latent(x)
-    embed_loss_x, x_hat, perp_x, _ = model.generate_output_from_latent(z)
-
     z_m = model.generate_latent(x_m)
     z_m = model.unet(z_m, t)
     embed_loss_y, y_hat, perp_y, _ = model.generate_output_from_latent(z_m)
 
-    orig_loss = ssim_loss(x_hat, x)
     pred_loss = ssim_loss(y_hat, y)
 
-    loss = orig_loss + pred_loss + embed_loss_y + embed_loss_x
+    loss = pred_loss + embed_loss_y
 
     optimizer.zero_grad()
     loss.backward()
     optimizer.step()
 
     if batch_idx % logging_rate == 0:
+        psnr_x = psnr(y_hat, x)
+        ssim_x = ssim(y_hat, x)
+        msssim_x = ms_ssim(y_hat, x)
+
         wandb.log(
             {
                 "train/loss": loss.item(),
-                "train/orig_loss": orig_loss.item(),
+                # "train/orig_loss": orig_loss.item(),
                 "train/pred_loss": pred_loss.item(),
-                "train/perplexity_x": perp_x.item(),
+                # "train/perplexity_x": perp_x.item(),
                 "train/perplexity_y": perp_y.item(),
-                "train/embed_loss_x": embed_loss_x.item(),
+                # "train/embed_loss_x": embed_loss_x.item(),
                 "train/embed_loss_y": embed_loss_y.item(),
+                "train/psnr": psnr_x.item(),
+                "train/ssim": ssim_x.item(),
+                "train/ms-ssim": msssim_x.item(),
             }
         )
 
@@ -89,7 +96,7 @@ def training_step(batch_idx, batch):
         caption = (
             "left: input, mid left: recon orig, mid right: recon target, right: target"
         )
-        mosaic = torch.cat([x[:4], x_hat[:4], x_m[:4], y_hat[:4], y[:4]], dim=-1)
+        mosaic = torch.cat([x_m[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log(
             {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
         )
@@ -201,7 +208,11 @@ if __name__ == "__main__":
 
     # loss
     ssim_loss = MixReconstructionLoss()
-    psnr = PeakSignalNoiseRatio()
+
+    # loss
+    psnr = PeakSignalNoiseRatio().to(device)
+    ssim = StructuralSimilarityIndexMeasure().to(device)
+    ms_ssim = MultiScaleStructuralSimilarityIndexMeasure().to(device)
 
     # dataset
     dataset = PairDataset(**config["data"])

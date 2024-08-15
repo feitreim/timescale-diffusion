@@ -2,9 +2,9 @@
 lr = 1e-3
 warmup = 50000
 num_epochs = 10
-epoch_size = 362500
+epoch_size = 199000
 img_logging_rate = 20000
-masking = true
+masking = false
 masking_factor = 0.9
 masking_size = 4
 artifact = "none"
@@ -14,15 +14,18 @@ artifact = "none"
 enabled = false
 beta = 0.9
 interval = 1000
-start = 250000
+start = 20000
+
+[structure_loss]
+artifact = "eitreif/timescale-diffusion/new_timestamps_proper:v7"
 
 [unet]
 depth = 4
 down_layers = ['AttnDown', "AttnDown", 'AttnDown']
 up_layers = ['AttnUp', 'AttnUp', 'AttnUp']
-in_dims = 16
+in_dims = 32
 h_dims = 512
-out_dims = 16
+out_dims = 32
 kernel_size = 3
 padding = 1
 e_dims = 64
@@ -32,7 +35,7 @@ heads = 8
 h_dim = 128
 res_h_dim = 64
 n_res_layers = 4
-n_embeddings = 1024
+n_embeddings = 2048
 stacks = 3
 embedding_dim = 7
 beta = 0.5
@@ -42,8 +45,8 @@ fullgraph = true
 mode = "max-autotune"
 
 [data]
-flist = "/cluster/research-groups/wehrwein/webcam/geiranger/allframes/filelist.txt"
-dir = "/cluster/research-groups/wehrwein/webcam/geiranger/allframes/"
+flist = "/cluster/research-groups/wehrwein/webcam/rane/fullpairs/filelist.txt"
+dir = "/cluster/research-groups/wehrwein/webcam/rane/fullpairs/"
 periodic = true
 batch_size = 32
 num_threads = 2

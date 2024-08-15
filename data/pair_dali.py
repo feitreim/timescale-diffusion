@@ -12,7 +12,7 @@ import torch
 from nvidia.dali import pipeline_def
 
 from data.frame_random_index import FrameRandomIndexModule
-from utils import convert_timestamp_to_periodic
+from utils import convert_timestamp_to_periodic_vec
 
 
 class ExternalInputCallable:
@@ -52,16 +52,16 @@ class ExternalInputCallable:
             [
                 plr.col("x_label")
                 .map_elements(
-                    lambda x: convert_timestamp_to_periodic(
-                        int(os.path.basename(x)), fps=30
+                    lambda x: convert_timestamp_to_periodic_vec(
+                        torch.as_tensor([int(os.path.basename(x))])
                     ),
                     return_dtype=plr.datatypes.Object,
                 )
                 .alias("x_periodic"),
                 plr.col("y_label")
                 .map_elements(
-                    lambda x: convert_timestamp_to_periodic(
-                        int(os.path.basename(x)), fps=30
+                    lambda x: convert_timestamp_to_periodic_vec(
+                        torch.as_tensor([int(os.path.basename(x))])
                     ),
                     return_dtype=plr.datatypes.Object,
                 )

@@ -36,7 +36,7 @@ FRAMES = [
     60 * 60 * 24 * 30.42 * 30.0,  # Month
     60 * 60 * 24 * 365.0 * 30.0,  # Year
 ]
-FRAME_TENSOR = torch.tensor(FRAMES)
+FRAME_TENSOR = torch.tensor(FRAMES).view(1, -1)
 
 
 def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
@@ -51,20 +51,26 @@ def convert_timestamp_to_periodic(t, fps=30, offset_seconds=0) -> Tensor:
     return torch.as_tensor(output_list)
 
 
-def convert_timestamp_to_periodic_vec(t: torch.Tensor, offset=0):
+def convert_timestamp_to_periodic_vec(x: torch.Tensor, offset=0):
     """
-    see convert_timestamp_to_periodic
+    formula:
+    forall t
+              pi(x + (t/4))
+         sin( ------------  )
+                 t/2
     in:
-        t: [B, 1] or [B]
-        offset: int
+        x: [B, 1] or [B]
+        offset: int, num frames since midnight jan 1st
 
     out:
-        t: [B, 7]
+        x: [B, 7]
+
     """
-    t = t.squeeze() + offset
-    t = t.view(-1, 1)
-    t = torch.div(torch.fmod(t, FRAME_TENSOR), FRAME_TENSOR)
-    return t
+    x = x.squeeze() + offset
+    x = x.view(-1, 1)
+    x = torch.pi * (x + (FRAME_TENSOR / 4))
+    x = x / (FRAME_TENSOR / 2)
+    return torch.sin(x)
 
 
 def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:

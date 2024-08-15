@@ -8,7 +8,23 @@ import random
 import multiprocessing as mp
 import cv2
 
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Tuple, List
+from tqdm import tqdm
+
+VLEN = 432_000  # Average lenght of a video
+
+
+@dataclass
+class VideoPair:
+    lhs: int
+    rhs: int
+    pairs: List[Tuple[int, int]]
+    lhs_offset: int
+    rhs_offset: int
+    lhs_path: str
+    rhs_path: str
 
 
 def get_frame_count(video_path):
@@ -29,24 +45,32 @@ def get_frame_count(video_path):
     return frame_count
 
 
-def process_pair(l, r, max_distance, step, offset, root):
+def process_pair(pair: VideoPair, root):
     print("processing pair.")
-    l_video = torchvision.io.VideoReader(l, "video")
+    l_video = torchvision.io.VideoReader(pair.lhs_path, "video")
     l_video.set_current_stream("video:0")
     print("l_video open")
-    r_video = torchvision.io.VideoReader(r, "video")
+    r_video = torchvision.io.VideoReader(pair.rhs_path, "video")
     print("r_video open")
     r_video.set_current_stream("video:0")
 
-    l_len = get_frame_count(l)
+    l_len = get_frame_count(pair.lhs_path)
     fps = 30
-    r_len = get_frame_count(r)
+    r_len = get_frame_count(pair.rhs_path)
     t_len = int(l_len + r_len)
 
-    sub_dir = Path(root) / str(offset)
+    sub_dir = Path(root) / str(pair.lhs_offset)
     os.makedirs(sub_dir, exist_ok=True)
 
-    i, total = 0, 0
+    for l_idx, r_idx in tqdm(pair.pairs):
+        if l_idx < l_len and r_idx < r_len:
+            l_video.seek(l_idx / fps)
+            r_video.seek(r_idx / fps)
+            l_frame, r_frame = next(l_video)["data"], next(r_video)["data"]
+            combined = torch.cat([l_frame, r_frame], dim=-1)
+            fname = sub_dir / f"{pair.lhs_offset + l_idx}_{pair.rhs_offset + r_idx}.jpg"
+            torchvision.io.write_jpeg(combined, fname, quality=100)
+
     while i < l_len and i + max_distance < t_len:
         distance = random.randint(0, max_distance)
         if i + distance >= l_len:
@@ -69,6 +93,68 @@ def process_pair(l, r, max_distance, step, offset, root):
         print(f"saved file {fname}. this proc saved {total}")
 
     return total
+
+
+def likely_exists(index, offsets, start) -> Tuple[int, int]:
+    for i in range(start - 1, len(offsets)):
+        diff = index - offsets[i]
+        if diff >= 0 and diff <= VLEN:
+            return (diff, i)
+    return (-1, -1)
+
+
+def video_loop(current, pairs, offsets, distances, step):
+    idx = 0
+    rhs_tots = [0] * len(offsets)
+    while idx <= VLEN:
+        d = distances[random.randrange(0, len(distances))]
+
+        if (rhs := likely_exists(idx + d, offsets, current))[0] >= 0:
+            local_frame, video_idx = rhs
+            pairs[current, video_idx, rhs_tots[video_idx]] = torch.as_tensor(
+                [idx, local_frame]
+            )
+            rhs_tots[video_idx] += 1
+
+        idx += step + random.randint(-step // 2, step // 2)
+
+
+def compute_pair_from_tensor(pair_tensor, i, j):
+    pairs = []
+    for pair in pair_tensor[i, j]:
+        pairs.append([pair[0], pair[1]])
+    return pairs
+
+
+def compute_video_pairs(videos, offsets, distances, step):
+    length = len(videos)
+    pairs = torch.ones((length, length, 2 * (VLEN // step), 2))
+    pairs *= -1
+    for v in range(length):
+        video_loop(v, pairs, offsets, distances, step)
+
+    v_pairs_list = []
+    for lhs in range(length):
+        for rhs in range(length):
+            if pairs[lhs, rhs, 0, 0] != -1:
+                v_pairs_list.append(
+                    VideoPair(
+                        lhs=lhs,
+                        rhs=rhs,
+                        pairs=compute_pair_from_tensor(pairs, lhs, rhs),
+                        lhs_offset=offsets[lhs],
+                        rhs_offset=offsets[rhs],
+                        lhs_path=videos[lhs],
+                        rhs_path=videos[rhs],
+                    )
+                )
+    return v_pairs_list
+
+
+def print_pairs(video_pairs):
+    for pair in video_pairs:
+        if pair.pairs[0][0] != -1:
+            print(f"{pair.lhs}, {pair.rhs}, len: {len(pair.pairs)}")
 
 
 def compute_frame_timestamps(first_vid, video_file_paths):
@@ -128,35 +214,25 @@ def main():
     parser.add_argument("--num_shards", help="total number of shards", type=int)
     parser.add_argument("--shard", help="which shard this is.", type=int)
     parser.add_argument("--step", help="step size", type=int, default=100)
-    parser.add_argument(
-        "--distance", help="max distance between frames", type=int, default=100000
-    )
     args = parser.parse_args()
     config = toml.decoder.load(args.config_file)
 
     vids = config["videos"]
     offsets = compute_frame_timestamps(vids[0], vids)
-    print(offsets)
 
-    lhs_vids = []
-    rhs_vids = []
-    for i in range(len(vids) - 1):
-        if abs((offsets[i] + 432000) - offsets[i + 1]) <= 50000:
-            lhs_vids.append(vids[i])
-            rhs_vids.append(vids[i + 1])
+    distances = config["distances"]
 
-    print(f"matches {len(lhs_vids)}")
+    pairs = compute_video_pairs(vids, offsets, distances, args.step)
 
     # sharding
-    shard_size = len(lhs_vids) // args.num_shards
+    shard_size = len(pairs) // args.num_shards
     start = shard_size * args.shard
-    end = len(lhs_vids)
+    end = len(pairs)
     if not args.shard == args.num_shards - 1:
         end = shard_size * (args.shard + 1)
 
-    lhs_vids = lhs_vids[start:end]
-    rhs_vids = rhs_vids[start:end]
-    offsets = offsets[start:end]
+    pairs = pairs[start:end]
+    print_pairs(pairs)
 
     print(f"shard size: {shard_size}, s: {start}, e: {end}")
 
