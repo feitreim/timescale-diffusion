@@ -38,12 +38,12 @@ class TSCVQVAE(nn.Module):
         s = 256  # Calculate the future spatial dim
         psd = [s := s // 2 for _ in range(stacks)]
         in_feat = (h_dim) * (psd[-1] * psd[-1])
-        self.latent_dense = nn.Linear(in_feat, 7)
-        self.embed = TimeEmbedding1D(7, 64)
+        self.latent_dense = nn.Linear(in_feat, 5)
+        self.embed = TimeEmbedding1D(5, 64)
         self.out_latent_dense = nn.Linear(64, 1792)
         self.e_dim = embedding_dim
         self.pre_quantization_conv = nn.Parameter(
-            torch.randn((7, embedding_dim, 1, 1)), requires_grad=True
+            torch.randn((5, embedding_dim, 1, 1)), requires_grad=True
         )
         self.vq = VectorQuantizer(n_embeddings, embedding_dim, beta)
         self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks)
@@ -54,7 +54,7 @@ class TSCVQVAE(nn.Module):
         z_t = self.to_latent(z)
         z_e = self.embed(z_t)
         z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
-        z_spatial = z_spatial.view(B, 7, 16, 16)
+        z_spatial = z_spatial.view(B, 5, 16, 16)
         z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
         embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
         x_hat = self.decoder(z_q)
@@ -74,7 +74,7 @@ class TSCVQVAE(nn.Module):
         B = t.shape[0]
         z_e = self.embed(t)
         z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
-        z_spatial = z_spatial.view(B, 7, 16, 16)
+        z_spatial = z_spatial.view(B, 5, 16, 16)
         z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
         embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
         x_hat = self.decoder(z_q)
@@ -235,9 +235,9 @@ if __name__ == "__main__":
 
     # loss
     ssim_loss = MixReconstructionLoss()
-    time_loss_scalar = torch.as_tensor(
-        [0.1, 0.1, 0.25, 0.5, 1.0, 1.0, 1.0], device=device
-    ).view(1, -1)
+    time_loss_scalar = torch.as_tensor([0.5, 0.5, 1.0, 1.0, 1.0], device=device).view(
+        1, -1
+    )
     time_loss_warmup = 0.0
 
     # img quality metrics

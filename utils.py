@@ -18,8 +18,6 @@ def collate_timescales(
 
 
 SECONDS = [
-    1.0,  # Second
-    60.0,  # Minute
     60 * 60.0,  # Hour
     60 * 60 * 24.0,  # Day
     60 * 60 * 24 * 7.0,  # Week
@@ -28,8 +26,6 @@ SECONDS = [
 ]
 
 FRAMES = [
-    30.0,  # Second
-    60.0 * 30.0,  # Minute
     60 * 60.0 * 30.0,  # Hour
     60 * 60 * 24.0 * 30.0,  # Day
     60 * 60 * 24 * 7.0 * 30.0,  # Week
@@ -63,7 +59,7 @@ def convert_timestamp_to_periodic_vec(x: torch.Tensor, offset=0):
         offset: int, num frames since midnight jan 1st
 
     out:
-        x: [B, 7]
+        x: [B, 5]
 
     """
     x = x.squeeze() + offset
@@ -134,11 +130,11 @@ def load_model_from_artifact(artifact, map_device: Union[str, torch.device] = "c
 
 
 def non_ar_video(model, frame, start, end, step):
-    s_time = convert_timestamp_to_periodic(start)
+    s_time = convert_timestamp_to_periodic_vec(start)
     frame = frame.squeeze().reshape(1, 3, 256, 256)
     frames = []
     for i in tqdm(range(start, end, step)):
-        c_time = convert_timestamp_to_periodic(i)
+        c_time = convert_timestamp_to_periodic_vec(torch.as_tensor([i]))
         t = torch.stack([s_time, c_time]).unsqueeze(0)
 
         frames.append(model.diffusion_step(frame, t))
@@ -146,11 +142,11 @@ def non_ar_video(model, frame, start, end, step):
 
 
 def ar_video(model, frame, start, end, step):
-    s_time = convert_timestamp_to_periodic(start)
+    s_time = convert_timestamp_to_periodic_vec(start)
     frame = frame.squeeze().reshape(1, 3, 256, 256)
     frames = []
     for i in tqdm(range(start, end, step)):
-        c_time = convert_timestamp_to_periodic(i)
+        c_time = convert_timestamp_to_periodic_vec(torch.as_tensor([i]))
         t = torch.stack([s_time, c_time]).unsqueeze(0)
 
         out_frame = model.diffusion_step(frame, t)
