@@ -5,6 +5,25 @@ from vqvae.blocks.residual import ResidualStack
 from tspm.time import TimeEmbedding2D
 
 
+class TimeBias(nn.Module):
+    def __init__(self, t_dim, dim_size):
+        super().__init__()
+        self.bias = nn.Parameter(
+            torch.rand((1, 1, dim_size, dim_size)), requires_grad=True
+        )
+        self.scalar = nn.Parameter(
+            torch.randn((1, t_dim * 2, dim_size * dim_size)), requires_grad=True
+        )
+        self.spatial = dim_size  # resolution
+
+    def forward(self, x, t):
+        B = x.shape[0]
+        scalar = t @ self.scalar
+        scalar = scalar.view(B, 1, self.spatial, self.spatial)
+        bias = self.bias * scalar
+        return torch.cat([x, bias], dim=1)
+
+
 class StructuralDecoder(nn.Module):
     """
     This is the p_phi (x|z) network. Given a latent sample z p_phi
@@ -24,7 +43,7 @@ class StructuralDecoder(nn.Module):
         kernel = 4
         stride = 2
 
-        self.first_time_embed = TimeEmbedding2D(5, 32 * 32)
+        self.first_time_embed = TimeBias(5, 32)
         self.first_up_conv = nn.Sequential(
             nn.ConvTranspose2d(
                 in_dim + 1, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1
@@ -36,7 +55,7 @@ class StructuralDecoder(nn.Module):
             ),
             nn.ReLU(True),
         )
-        self.second_time_embed = TimeEmbedding2D(5, 64 * 64)
+        self.second_time_embed = TimeBias(5, 64)
         self.second_up_conv = nn.Sequential(
             nn.ConvTranspose2d(
                 (h_dim // 2) + 1,
@@ -56,7 +75,7 @@ class StructuralDecoder(nn.Module):
             ),
             nn.ReLU(True),
         )
-        self.third_time_embed = TimeEmbedding2D(5, 128 * 128)
+        self.third_time_embed = TimeBias(5, 128)
         self.third_up_conv = nn.Sequential(
             nn.ConvTranspose2d(
                 h_dim + 1, h_dim // 2, kernel_size=kernel, stride=stride, padding=1
@@ -69,19 +88,15 @@ class StructuralDecoder(nn.Module):
         )
 
     def forward(self, x, t):
-        B = x.shape[0]
-
-        t1 = self.first_time_embed(t).view(B, 1, 32, 32)
-        x = torch.cat([x, t1], dim=1)
+        t = t.flatten(1)
+        x = self.first_time_embed(x, t)
         x = self.first_up_conv(x)
 
-        t2 = self.second_time_embed(t).view(B, 1, 64, 64)
-        x = torch.cat([x, t2], dim=1)
+        x = self.second_time_embed(x, t)
         x = self.second_up_conv(x)
 
-        t3 = self.third_time_embed(t).view(B, 1, 128, 128)
-        x = torch.cat([x, t3], dim=1)
-        x = self.second_up_conv(x)
+        x = self.third_time_embed(x, t)
+        x = self.third_up_conv(x)
 
         return x
 

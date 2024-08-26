@@ -20,7 +20,6 @@ from tqdm import tqdm
 from data.pair_dali import PairDataset
 from losses.recon import MixReconstructionLoss
 from utils import unpack, convert_timestamp_to_periodic_vec
-from tspm.time import TimeEmbedding1D
 from vqvae.blocks.encoder import Encoder
 from vqvae.blocks.quantizer import VectorQuantizer
 from vqvae.blocks.structdec import StructuralDecoder
@@ -34,10 +33,10 @@ class SVAE(nn.Module):
         super().__init__()
         self.encoder = Encoder(3, h_dim, n_res_layers, res_h_dim, 3)
         in_feat = 5 * 32 * 32
-        self.latent_dense = nn.Linear(in_feat, 7)
+        self.latent_dense = nn.Linear(in_feat, 5)
         self.e_dim = embedding_dim
         self.pre_quantization_conv = nn.Parameter(
-            torch.randn((h_dim, embedding_dim, 1, 1)), requires_grad=True
+            torch.randn((embedding_dim, h_dim, 1, 1)), requires_grad=True
         )
         self.vq = VectorQuantizer(n_embeddings, embedding_dim, beta)
         self.decoder = StructuralDecoder(
@@ -45,16 +44,13 @@ class SVAE(nn.Module):
         )
 
     def forward(self, x):
-        B = x.shape[0]
         z = self.encoder(x)
-        z_t = self.to_latent(z)
-        z_e = self.embed(z_t)
-        z_spatial = fn.leaky_relu(self.out_latent_dense(z_e))
-        z_spatial = z_spatial.view(B, 5, 16, 16)
-        z_pq = fn.conv2d(z_spatial, self.pre_quantization_conv)
+        t_hat = self.to_latent(z[:, :5])
+        t_hat = t_hat.unsqueeze(1).expand(-1, 2, -1)
+        z_pq = fn.conv2d(z, self.pre_quantization_conv)
         embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
-        x_hat = self.decoder(z_q)
-        return embedding_loss, x_hat, perplexity, z_t
+        y_hat = self.decoder(z_q, t_hat)
+        return embedding_loss, y_hat, perplexity, z_q
 
     def to_latent(self, z):
         return fn.tanh(self.latent_dense(z.flatten(1)))

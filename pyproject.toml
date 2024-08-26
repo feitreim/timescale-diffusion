@@ -1,0 +1,47 @@
+[project]
+name = "timescale-diffusion"
+version = "0.1.0"
+description = "future frame prediction"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+	"torch",
+	"torchvision",
+	"torchmetrics",
+	"torchinfo",
+	"pytorch-lightning",
+	"einops",
+	"schedulefree",
+	"nvidia-dali-cuda120",
+	"nvidia-nvimgcodec-cu12",
+	"nvidia-nvjpeg-cu12",
+	"nvidia-nvjpeg2k-cu12",
+	"polars",
+	"torch-fidelity",
+	"numpy",
+	"scikit-learn",
+	"av",
+	"imageio",
+	"pims",
+	"sk-video",
+	"wandb",
+	"pip-system-certs",
+	"typing",
+	"argparse",
+	"toml",
+	"tqdm",
+	"matplotlib",
+	"pandas",
+	"seaborn",
+	"ruff",
+	"dill",
+]
+
+[tool.uv]
+dev-dependencies = []
+cache-dir = "/scratch_ssd/research-groups/wehrwein/.uvcache"
+link-mode = "symlink"
+
+[tool.setuptools]
+py-modules = ['tspm', 'data', 'vqvae', 'wandb', 'blocks', 'losses', 'configs', 'datasets', 'artifacts', 'condor_logs', 'experiments']
+
