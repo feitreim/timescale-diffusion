@@ -30,9 +30,7 @@ class VQVAE(nn.Module):
         super(VQVAE, self).__init__()
         # encode image into continuous latent space
         self.encoder = Encoder(3, h_dim, n_res_layers, res_h_dim, stacks)
-        self.pre_quantization_conv = nn.Conv2d(
-            h_dim, embedding_dim, kernel_size=1, stride=1
-        )
+        self.pre_quantization_conv = nn.Conv2d(h_dim, embedding_dim, kernel_size=1, stride=1)
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
         # decode the discrete latent representation

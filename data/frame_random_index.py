@@ -72,22 +72,18 @@ class FrameDataset(torch.utils.data.IterableDataset):
             frame, timestamp = self.get_next_frame()
             frame = self.transforms(frame)
             if self.input_size[0] != self.input_size[1]:
-                frame = torch.stack(
-                    torch.split(frame, self.input_size[-1], dim=-2), dim=1
-                )
+                frame = torch.stack(torch.split(frame, self.input_size[-1], dim=-2), dim=1)
             pyr = frame.clone()  # [ B T C H W ]
             frame = frame.sum(dim=1)  # [ B C H W ]
             yield frame, pyr, timestamp
 
     def get_next_frame(self) -> Tuple[Tensor, Tensor]:
         idx = self.frame_order[self.current_index]
-        img_path = f"{self.data_dir}{self.frame_fnames[idx]}"
+        img_path = f'{self.data_dir}{self.frame_fnames[idx]}'
         frame = io.read_image(img_path)
         self.current_index += 1
         if self.periodic_timestamp:
-            timestamp = convert_timestamp_to_periodic(
-                int(self.frame_fnames[idx]), self.fps, self.offset_seconds
-            )
+            timestamp = convert_timestamp_to_periodic(int(self.frame_fnames[idx]), self.fps, self.offset_seconds)
         else:
             timestamp = torch.as_tensor(int(self.frame_fnames[idx]))
         return frame, timestamp

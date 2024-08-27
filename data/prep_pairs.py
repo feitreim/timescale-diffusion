@@ -33,7 +33,7 @@ def get_frame_count(video_path):
 
     # Check if the video opened successfully
     if not video.isOpened():
-        print("Error opening video file")
+        print('Error opening video file')
         return -1
 
     # Get the total number of frames
@@ -46,13 +46,13 @@ def get_frame_count(video_path):
 
 
 def process_pair(pair: VideoPair, root):
-    print("processing pair.")
-    l_video = torchvision.io.VideoReader(pair.lhs_path, "video")
-    l_video.set_current_stream("video:0")
-    print("l_video open")
-    r_video = torchvision.io.VideoReader(pair.rhs_path, "video")
-    print("r_video open")
-    r_video.set_current_stream("video:0")
+    print('processing pair.')
+    l_video = torchvision.io.VideoReader(pair.lhs_path, 'video')
+    l_video.set_current_stream('video:0')
+    print('l_video open')
+    r_video = torchvision.io.VideoReader(pair.rhs_path, 'video')
+    print('r_video open')
+    r_video.set_current_stream('video:0')
 
     l_len = get_frame_count(pair.lhs_path)
     fps = 30
@@ -66,31 +66,31 @@ def process_pair(pair: VideoPair, root):
         if l_idx < l_len and r_idx < r_len:
             l_video.seek(l_idx / fps)
             r_video.seek(r_idx / fps)
-            l_frame, r_frame = next(l_video)["data"], next(r_video)["data"]
+            l_frame, r_frame = next(l_video)['data'], next(r_video)['data']
             combined = torch.cat([l_frame, r_frame], dim=-1)
-            fname = sub_dir / f"{pair.lhs_offset + l_idx}_{pair.rhs_offset + r_idx}.jpg"
+            fname = sub_dir / f'{pair.lhs_offset + l_idx}_{pair.rhs_offset + r_idx}.jpg'
             torchvision.io.write_jpeg(combined, fname, quality=100)
 
     while i < l_len and i + max_distance < t_len:
         distance = random.randint(0, max_distance)
         if i + distance >= l_len:
             l_video.seek(i / fps)
-            l_frame = next(l_video)["data"]
+            l_frame = next(l_video)['data']
             idx = (i + distance - l_len) / fps
             idx = idx if idx > 0 else 1
             r_video.seek(idx)
-            r_frame = next(r_video)["data"]
+            r_frame = next(r_video)['data']
         else:
             l_video.seek(i / fps)
-            l_frame = next(l_video)["data"]
+            l_frame = next(l_video)['data']
             l_video.seek((i + distance) / fps)
-            r_frame = next(l_video)["data"]
+            r_frame = next(l_video)['data']
         combined = torch.cat([l_frame, r_frame], dim=-1)
-        fname = sub_dir / f"{offset+i}_{offset+i+distance}.jpg"
+        fname = sub_dir / f'{offset+i}_{offset+i+distance}.jpg'
         torchvision.io.write_jpeg(combined, fname, quality=100)
         i += step + random.randint(-step // 2, step // 2)
         total += 1
-        print(f"saved file {fname}. this proc saved {total}")
+        print(f'saved file {fname}. this proc saved {total}')
 
     return total
 
@@ -111,9 +111,7 @@ def video_loop(current, pairs, offsets, distances, step):
 
         if (rhs := likely_exists(idx + d, offsets, current))[0] >= 0:
             local_frame, video_idx = rhs
-            pairs[current, video_idx, rhs_tots[video_idx]] = torch.as_tensor(
-                [idx, local_frame]
-            )
+            pairs[current, video_idx, rhs_tots[video_idx]] = torch.as_tensor([idx, local_frame])
             rhs_tots[video_idx] += 1
 
         idx += step + random.randint(-step // 2, step // 2)
@@ -154,7 +152,7 @@ def compute_video_pairs(videos, offsets, distances, step):
 def print_pairs(video_pairs):
     for pair in video_pairs:
         if pair.pairs[0][0] != -1:
-            print(f"{pair.lhs}, {pair.rhs}, len: {len(pair.pairs)}")
+            print(f'{pair.lhs}, {pair.rhs}, len: {len(pair.pairs)}')
 
 
 def compute_frame_timestamps(first_vid, video_file_paths):
@@ -166,10 +164,10 @@ def compute_frame_timestamps(first_vid, video_file_paths):
     """
 
     def compute_date_info(path):
-        filename = path.split("/")[-1]
+        filename = path.split('/')[-1]
         filename = filename.casefold().strip("adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/")
-        yearmonthday = filename.split("_")[0]
-        hourminsec = filename.split("_")[-1]
+        yearmonthday = filename.split('_')[0]
+        hourminsec = filename.split('_')[-1]
 
         # Create substring of all info
         date_info = []
@@ -208,19 +206,19 @@ def gen_args(lhs, rhs, distance, step, offsets, output_path):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="train the timescale diffusion model")
-    parser.add_argument("config_file", help="Path to the configuration file")
-    parser.add_argument("output_path", help="run name.")
-    parser.add_argument("--num_shards", help="total number of shards", type=int)
-    parser.add_argument("--shard", help="which shard this is.", type=int)
-    parser.add_argument("--step", help="step size", type=int, default=100)
+    parser = argparse.ArgumentParser(description='train the timescale diffusion model')
+    parser.add_argument('config_file', help='Path to the configuration file')
+    parser.add_argument('output_path', help='run name.')
+    parser.add_argument('--num_shards', help='total number of shards', type=int)
+    parser.add_argument('--shard', help='which shard this is.', type=int)
+    parser.add_argument('--step', help='step size', type=int, default=100)
     args = parser.parse_args()
     config = toml.decoder.load(args.config_file)
 
-    vids = config["videos"]
+    vids = config['videos']
     offsets = compute_frame_timestamps(vids[0], vids)
 
-    distances = config["distances"]
+    distances = config['distances']
 
     pairs = compute_video_pairs(vids, offsets, distances, args.step)
 
@@ -234,7 +232,7 @@ def main():
     pairs = pairs[start:end]
     print_pairs(pairs)
 
-    print(f"shard size: {shard_size}, s: {start}, e: {end}")
+    print(f'shard size: {shard_size}, s: {start}, e: {end}')
 
     with mp.Pool(4) as pool:
         result_queue = mp.Manager().Queue()
@@ -257,12 +255,12 @@ def main():
             try:
                 result = result_queue.get(timeout=1)
                 total += result
-                print("Done with a pair.")
-                print(f"saved {total} images so far...")
+                print('Done with a pair.')
+                print(f'saved {total} images so far...')
             except queue.Empty:
                 if result_queue.empty():
                     break
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

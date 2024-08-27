@@ -31,32 +31,25 @@ class LpReconstructionLoss(torch.nn.Module):
         - reduction (str, optional): The method used for reducing the loss.
     """
 
-    def __init__(self, p: Union[float, str] = 1.0, reduction: str = "mean") -> None:
+    def __init__(self, p: Union[float, str] = 1.0, reduction: str = 'mean') -> None:
         super(LpReconstructionLoss, self).__init__()
         # Validate the inputs and save for later use
         if isinstance(p, float):
-            assert (
-                p >= 0
-            ), f"RECONSTRUCTION LOSS ERROR: p must be non-negative, was {p}."
+            assert p >= 0, f'RECONSTRUCTION LOSS ERROR: p must be non-negative, was {p}.'
         if isinstance(p, str):
             assert p in [
-                "fro",
-                "nuc",
-            ], f"RECONSTRUCTION LOSS ERROR: non-ordinal p was not recognized, was {p}."
+                'fro',
+                'nuc',
+            ], f'RECONSTRUCTION LOSS ERROR: non-ordinal p was not recognized, was {p}.'
         self.p = p
-        assert (
-            reduction.lower()
-            in [
-                "mean",
-                "sum",
-                "none",
-            ]
-        ), f"RECONSTRUCTION LOSS ERROR: {reduction.lower()} is an unrecognized reduction method."
+        assert reduction.lower() in [
+            'mean',
+            'sum',
+            'none',
+        ], f'RECONSTRUCTION LOSS ERROR: {reduction.lower()} is an unrecognized reduction method.'
         self.reduction = reduction.lower()
 
-    def forward(
-        self, reconstructions: torch.Tensor, targets: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, reconstructions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
             - reconstructions (torch.Tensor): The image reconstructions of the shape (B, C, H, W).
@@ -68,7 +61,7 @@ class LpReconstructionLoss(torch.nn.Module):
         # Validate the input shapes
         assert (
             reconstructions.size() == targets.size()
-        ), f"RECONSTRUCTION LOSS ERROR: reconstructions and targets did not have the same dimensions, were {reconstructions.size()} and {targets.size()}."
+        ), f'RECONSTRUCTION LOSS ERROR: reconstructions and targets did not have the same dimensions, were {reconstructions.size()} and {targets.size()}.'
         # Flatten the vectors
         reconstructions = torch.flatten(reconstructions, start_dim=1)
         targets = torch.flatten(targets, start_dim=1)
@@ -77,9 +70,9 @@ class LpReconstructionLoss(torch.nn.Module):
         # Take the lp norm of the distances
         reconstruction_losses = torch.linalg.vector_norm(distances, ord=self.p, dim=1)
         # Reduce
-        if self.reduction == "mean":
+        if self.reduction == 'mean':
             reconstruction_loss = torch.mean(reconstruction_losses)
-        elif self.reduction == "sum":
+        elif self.reduction == 'sum':
             reconstruction_loss = torch.sum(reconstruction_losses)
         else:
             reconstruction_loss = reconstruction_losses
@@ -132,14 +125,10 @@ class MixReconstructionLoss(torch.nn.Module):
         )
         """
         self.l1 = torch.nn.L1Loss()
-        assert (
-            0.0 <= mix_alpha <= 1.0
-        ), f"RECONSTRUCTION LOSS ERROR: mix_alpha must be in [0, 1], was {mix_alpha}."
+        assert 0.0 <= mix_alpha <= 1.0, f'RECONSTRUCTION LOSS ERROR: mix_alpha must be in [0, 1], was {mix_alpha}.'
         self.mix_alpha = mix_alpha
 
-    def forward(
-        self, reconstructions: torch.Tensor, targets: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, reconstructions: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """
         Args:
             - reconstructions (torch.Tensor): The image reconstructions of the shape (B, C, H, W).
@@ -149,16 +138,14 @@ class MixReconstructionLoss(torch.nn.Module):
             - reconstruction_loss (torch.Tensor): The reduced reconstruction loss.
         """
         if reconstructions.ndim > 4:
-            reconstructions = rearrange(reconstructions, "B T C H W -> (B T) C H W")
+            reconstructions = rearrange(reconstructions, 'B T C H W -> (B T) C H W')
         if targets.ndim > 4:
-            targets = rearrange(targets, "B T C H W -> (B T) C H W")
+            targets = rearrange(targets, 'B T C H W -> (B T) C H W')
 
         # Calculate the MS-SSIM Loss
         ms_ssim_loss = 1 - self.ms_ssim(reconstructions, targets)
         # Calculate l1 loss
         l1_loss = self.l1(reconstructions, targets)
         # Combine into a weighted sum
-        reconstruction_loss = (
-            self.mix_alpha * ms_ssim_loss + (1 - self.mix_alpha) * l1_loss
-        )
+        reconstruction_loss = self.mix_alpha * ms_ssim_loss + (1 - self.mix_alpha) * l1_loss
         return reconstruction_loss

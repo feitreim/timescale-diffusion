@@ -16,18 +16,10 @@ class AttnBlock(nn.Module):
 
     def __init__(self, e_dim):
         super().__init__()
-        self.q_proj = torch.nn.Parameter(
-            torch.randn(1, e_dim, e_dim), requires_grad=True
-        )
-        self.k_proj = torch.nn.Parameter(
-            torch.randn(1, e_dim, e_dim), requires_grad=True
-        )
-        self.v_proj = torch.nn.Parameter(
-            torch.randn(1, e_dim, e_dim), requires_grad=True
-        )
-        self.attn_proj = torch.nn.Parameter(
-            torch.randn(1, e_dim, e_dim), requires_grad=True
-        )
+        self.q_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim), requires_grad=True)
+        self.k_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim), requires_grad=True)
+        self.v_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim), requires_grad=True)
+        self.attn_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim), requires_grad=True)
         self.e_dim = e_dim
         self.norm = nn.LayerNorm(e_dim)
 

@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 class VectorQuantizer(nn.Module):
@@ -58,9 +58,7 @@ class VectorQuantizer(nn.Module):
         z_q = torch.matmul(min_encodings, self.embedding.weight).view(z.shape)
 
         # compute loss for embedding
-        loss = torch.mean((z_q.detach() - z) ** 2) + self.beta * torch.mean(
-            (z_q - z.detach()) ** 2
-        )
+        loss = torch.mean((z_q.detach() - z) ** 2) + self.beta * torch.mean((z_q - z.detach()) ** 2)
 
         # preserve gradients
         z_q = z + (z_q - z).detach()

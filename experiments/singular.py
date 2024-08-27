@@ -26,13 +26,13 @@ from losses.reconstructionLosses import MixReconstructionLoss
 
 
 def save_model(model):
-    artifact = wandb.Artifact(args.name, type="model")
-    artifact.add_file(local_path=args.config_file, name="model_config", is_tmp=True)
-    checkpoint_path = pathlib.Path("./.checkpoints") / f"{args.name}"
+    artifact = wandb.Artifact(args.name, type='model')
+    artifact.add_file(local_path=args.config_file, name='model_config', is_tmp=True)
+    checkpoint_path = pathlib.Path('./.checkpoints') / f'{args.name}'
     checkpoint_path.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = f"{str(checkpoint_path.resolve())}/model_state_dict.pth"
+    checkpoint_path = f'{str(checkpoint_path.resolve())}/model_state_dict.pth'
     torch.save(model.state_dict(), checkpoint_path)
-    artifact.add_file(local_path=checkpoint_path, name="model_state_dict", is_tmp=True)
+    artifact.add_file(local_path=checkpoint_path, name='model_state_dict', is_tmp=True)
     wandb.log_artifact(artifact)
 
 
@@ -57,22 +57,20 @@ def training_step(batch_idx, batch):
     if batch_idx % logging_rate == 0:
         wandb.log(
             {
-                "train/loss": loss.item(),
-                "train/pred_loss": pred_loss.item(),
-                "train/orig_loss": orig_loss.item(),
-                "train/embed_loss_y": embed_loss_y.item(),
-                "train/embed_loss_x": embed_loss_x.item(),
-                "train/perplexity_y": perplexity_y.item(),
-                "train/perplexity_x": perplexity_x.item(),
+                'train/loss': loss.item(),
+                'train/pred_loss': pred_loss.item(),
+                'train/orig_loss': orig_loss.item(),
+                'train/embed_loss_y': embed_loss_y.item(),
+                'train/embed_loss_x': embed_loss_x.item(),
+                'train/perplexity_y': perplexity_y.item(),
+                'train/perplexity_x': perplexity_x.item(),
             }
         )
 
     if batch_idx % (logging_rate**2) == 0:
-        caption = "left: input, middle left: input recon, middle right: target recon, right: target"
+        caption = 'left: input, middle left: input recon, middle right: target recon, right: target'
         mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
-        wandb.log(
-            {"train/images": [wandb.Image(img, caption=caption) for img in mosaic]}
-        )
+        wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
 @torch.no_grad
@@ -83,7 +81,7 @@ def validation_step(batch_idx, batch):
     loss = ssim_loss(x_hat, y)
 
     if batch_idx % 10 == 0:
-        wandb.log({"val/loss": loss.item()})
+        wandb.log({'val/loss': loss.item()})
 
 
 def running_average_weights(model: nn.Module, path, beta):
@@ -91,51 +89,45 @@ def running_average_weights(model: nn.Module, path, beta):
         state = torch.load(path).state_dict()
         model_state = model.state_dict()
         for name in model_state.keys():
-            model_state[name].data = (model_state[name].data * beta) + (
-                state[name].data * (1 - beta)
-            )
+            model_state[name].data = (model_state[name].data * beta) + (state[name].data * (1 - beta))
         torch.save(model, path)
         model.load_state_dict(model_state)
 
 
 # --------------- Script
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     # Args
-    parser = argparse.ArgumentParser(description="train the timescale diffusion model")
-    parser.add_argument("config_file", help="Path to the configuration file")
-    parser.add_argument("--name", help="run name.")
+    parser = argparse.ArgumentParser(description='train the timescale diffusion model')
+    parser.add_argument('config_file', help='Path to the configuration file')
+    parser.add_argument('--name', help='run name.')
     args = parser.parse_args()
 
     # Load config
     config = toml.decoder.load(args.config_file)
 
     # dataset
-    batch_size = config["data"]["batch_size"]
-    dataset = PairDataset(**config["data"])
+    batch_size = config['data']['batch_size']
+    dataset = PairDataset(**config['data'])
 
     # Device configuration
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    torch.set_float32_matmul_precision("medium")
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    torch.set_float32_matmul_precision('medium')
 
     # Hyperparameters
-    learning_rate = config["hp"]["lr"] if "lr" in config["hp"] else 0.001
-    num_epochs = config["hp"]["num_epochs"] if "num_epochs" in config["hp"] else 5
-    logging_rate = (
-        config["hp"]["logging_rate"] if "logging_rate" in config["hp"] else 50
-    )
-    epoch_size = config["hp"]["epoch_size"] if "epoch_size" in config["hp"] else 100000
+    learning_rate = config['hp']['lr'] if 'lr' in config['hp'] else 0.001
+    num_epochs = config['hp']['num_epochs'] if 'num_epochs' in config['hp'] else 5
+    logging_rate = config['hp']['logging_rate'] if 'logging_rate' in config['hp'] else 50
+    epoch_size = config['hp']['epoch_size'] if 'epoch_size' in config['hp'] else 100000
 
     # Model(s)
     # Just UNET for now
-    model_unopt = VQVAE(**config["model"])
+    model_unopt = VQVAE(**config['model'])
     summary(model_unopt, input_size=(batch_size, 3, 256, 256))
     model_unopt = model_unopt.to(device)
-    model = torch.compile(model_unopt, **config["compile"])
-    gen_latent = torch.compile(model_unopt.generate_latent, **config["compile"])
-    gen_output = torch.compile(
-        model_unopt.generate_output_from_latent, **config["compile"]
-    )
+    model = torch.compile(model_unopt, **config['compile'])
+    gen_latent = torch.compile(model_unopt.generate_latent, **config['compile'])
+    gen_output = torch.compile(model_unopt.generate_output_from_latent, **config['compile'])
 
     class Pusher(nn.Module):
         def __init__(self, last_dim_size):
@@ -166,11 +158,11 @@ if __name__ == "__main__":
 
     # ema of weights
     ema_id = random.randint(0, 2000000)
-    ema_path = f"./.running_avgs/{ema_id}/"
-    ema_beta = config["ema"]["beta"]
-    ema_interval = config["ema"]["interval"]
+    ema_path = f'./.running_avgs/{ema_id}/'
+    ema_beta = config['ema']['beta']
+    ema_interval = config['ema']['interval']
     Path(ema_path).mkdir(parents=True, exist_ok=True)
-    ema_path = Path(ema_path) / "lastweight.ckpt"
+    ema_path = Path(ema_path) / 'lastweight.ckpt'
     torch.save(model_unopt, ema_path)
 
     # loss
@@ -179,11 +171,11 @@ if __name__ == "__main__":
     # dataset
     # val_dataset = FrameDataset(**config['val_data'])
     # wandb
-    wandb.init(project="latent-rotation", name=args.name)
+    wandb.init(project='latent-rotation', name=args.name)
     save_model(model)
 
     for e in range(num_epochs):
-        wandb.log({"epoch": e})
+        wandb.log({'epoch': e})
         for batch_idx, batch in tqdm(enumerate(dataset)):
             training_step(batch_idx, batch)
             if batch_idx % ema_interval == 0:

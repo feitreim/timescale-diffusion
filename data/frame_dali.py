@@ -36,7 +36,7 @@ def img_pipe(
         preallocate_height_hint=256,
         preallocate_width_hint=256,
         use_fast_idct=True,
-        device="mixed",
+        device='mixed',
     )
 
     reorder = fn.transpose(images, perm=[2, 0, 1])
@@ -76,7 +76,7 @@ class DALIDataset(torch.utils.data.IterableDataset):
         num_devices=1,
     ):
         super().__init__()
-        self.name = f"Reader{shard_id}"
+        self.name = f'Reader{shard_id}'
         pipe = img_pipe(
             filelist=filelist,
             fill=fill,
@@ -89,21 +89,17 @@ class DALIDataset(torch.utils.data.IterableDataset):
             num_threads=num_threads,
             device_id=shard_id,
         )
-        self.pipeline = pydali.DALIGenericIterator(
-            pipe, output_map=["frames", "labels"], reader_name=self.name
-        )
+        self.pipeline = pydali.DALIGenericIterator(pipe, output_map=['frames', 'labels'], reader_name=self.name)
         self.periodic
 
     def __iter__(self):
         for data in enumerate(self.pipeline):
             frames, labels = (
-                data[1][0]["frames"],
-                data[1][0]["labels"],
+                data[1][0]['frames'],
+                data[1][0]['labels'],
             )
 
-            timestamps_list = [
-                convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels
-            ]
+            timestamps_list = [convert_timestamp_to_periodic(int(l[0]), fps=30) for l in labels]
             timestamps = torch.stack(timestamps_list)
 
             yield frames, timestamps
@@ -150,9 +146,9 @@ class DaliImage(pl.LightningDataModule):
 
     def setup(self, stage):
         super().setup(stage=stage)
-        self.local_rank = int(os.environ["LOCAL_RANK"])
+        self.local_rank = int(os.environ['LOCAL_RANK'])
 
-        self.name = f"Reader{self.local_rank}"
+        self.name = f'Reader{self.local_rank}'
         pipe = img_pipe(
             filelist=self.filelist,
             fill=self.fill,
@@ -173,20 +169,16 @@ class DaliImage(pl.LightningDataModule):
 
             def __next__(self):
                 out = super().__next__()
-                labels = out[0]["labels"]
-                frames = out[0]["frames"]
+                labels = out[0]['labels']
+                frames = out[0]['frames']
 
                 if self.periodic:
-                    label_list = [
-                        convert_timestamp_to_periodic(label) for label in labels
-                    ]
+                    label_list = [convert_timestamp_to_periodic(label) for label in labels]
                     labels = torch.stack(label_list)
 
                 return frames, labels
 
-        self.loader = LightningWrapper(
-            self.periodic, pipe, output_map=["frames", "labels"], reader_name=self.name
-        )
+        self.loader = LightningWrapper(self.periodic, pipe, output_map=['frames', 'labels'], reader_name=self.name)
 
     def train_dataloader(self):
         return self.loader

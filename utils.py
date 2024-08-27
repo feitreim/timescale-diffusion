@@ -65,7 +65,9 @@ def convert_timestamp_to_periodic_vec(x: torch.Tensor, offset=0):
     x = x.view(-1, 1)
     x = torch.pi * (x + (FRAME_TENSOR / 4))
     x = x / (FRAME_TENSOR / 2)
-    return torch.sin(x)
+    sin = torch.sin(x)
+    cos = torch.cos(x)
+    return torch.cat([sin, cos], dim=-1)
 
 
 def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:
@@ -106,24 +108,20 @@ def clear_gpu_mem_after(func):
 def load_frozen_vqvae(name: str):
     state, args = download_artifact(name)
     args_dict = toml.load(args)
-    vqvae = VQVAE(**args_dict["model_options"])
-    vqvae.load_state_dict(torch.load(state, map_location="cpu"))
+    vqvae = VQVAE(**args_dict['model_options'])
+    vqvae.load_state_dict(torch.load(state, map_location='cpu'))
     vqvae.eval()
     return vqvae
 
 
-def load_model_from_artifact(artifact, map_device: Union[str, torch.device] = "cuda"):
+def load_model_from_artifact(artifact, map_device: Union[str, torch.device] = 'cuda'):
     state_dict_path, arg_dict_path = download_artifact(artifact)
     config = toml.load(arg_dict_path)
-    model = TSPM(config["unet"], config["vqvae"])
+    model = TSPM(config['unet'], config['vqvae'])
     if isinstance(map_device, str):
-        state_dict = torch.load(
-            state_dict_path, weights_only=False, map_location=torch.device(map_device)
-        )
+        state_dict = torch.load(state_dict_path, weights_only=False, map_location=torch.device(map_device))
     else:
-        state_dict = torch.load(
-            state_dict_path, weights_only=False, map_location=map_device
-        )
+        state_dict = torch.load(state_dict_path, weights_only=False, map_location=map_device)
     model.load_state_dict(state_dict)
     return model
 

@@ -41,14 +41,8 @@ class UNet(nn.Module):
         activation = nn.Tanh()
         self.t_emb = TimeEmbedding2D(7, e_dims)
         self.in_conv = nn.Conv2d(in_dims, dims[0] // 2, kernel_size, padding=padding)
-        down = [
-            get_layer(down_layers[i], h // 2, h, kernel_size, padding, e_dims, heads)
-            for i, h in enumerate(dims[:-1])
-        ]
-        up = [
-            get_layer(up_layers[i], h * 2, h // 2, kernel_size, padding, e_dims, heads)
-            for i, h in enumerate(reversed(dims[:-1]))
-        ]
+        down = [get_layer(down_layers[i], h // 2, h, kernel_size, padding, e_dims, heads) for i, h in enumerate(dims[:-1])]
+        up = [get_layer(up_layers[i], h * 2, h // 2, kernel_size, padding, e_dims, heads) for i, h in enumerate(reversed(dims[:-1]))]
 
         self.down_layers = nn.ModuleList(down)
         self.bottom_layer = UNetBottom(h_dims, kernel_size, padding, e_dims)
@@ -86,14 +80,12 @@ class UNetBottom(nn.Module):
         return x
 
 
-def get_layer(
-    name: str, in_dim, out_dim, kernel_size, padding, e_dim, heads
-) -> nn.Module:
-    if name == "ResDown":
+def get_layer(name: str, in_dim, out_dim, kernel_size, padding, e_dim, heads) -> nn.Module:
+    if name == 'ResDown':
         return ResDown(in_dim, out_dim, kernel_size, padding)
-    if name == "AttnDown":
+    if name == 'AttnDown':
         return AttnDown(in_dim, out_dim, kernel_size, padding, e_dim, heads)
-    if name == "ResUp":
+    if name == 'ResUp':
         return ResUp(in_dim, out_dim, kernel_size, padding)
     # if name == 'AttnUp':
     return AttnUp(in_dim, out_dim, kernel_size, padding, e_dim, heads)

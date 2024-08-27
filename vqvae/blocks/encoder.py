@@ -25,9 +25,7 @@ class Encoder(nn.Module):
         kernel = 4
         stride = 2
 
-        conv_stack = build_conv_stack(
-            stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_layers
-        )
+        conv_stack = build_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_layers)
 
         self.conv_stack = nn.Sequential(*conv_stack)
 
@@ -45,9 +43,7 @@ def build_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_lay
         conv_stack += [
             nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel, stride=stride, padding=1),
             nn.ReLU(True),
-            nn.Conv2d(
-                h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1
-            ),
+            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         ]
     else:
@@ -60,9 +56,7 @@ def build_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_lay
                 padding=1,
             ),
             nn.ReLU(True),
-            nn.Conv2d(
-                h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1
-            ),
+            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         ]
         return conv_stack
@@ -77,20 +71,14 @@ def build_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_lay
         conv_stack += [
             nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel, stride=stride, padding=1),
             nn.ReLU(True),
-            nn.Conv2d(
-                h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1
-            ),
+            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         ]
     else:
         conv_stack += [
-            nn.Conv2d(
-                h_dim // 2, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1
-            ),
+            nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             nn.ReLU(True),
-            nn.Conv2d(
-                h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1
-            ),
+            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         ]
     return conv_stack
@@ -104,20 +92,20 @@ def test():
     # test encoder
     encoder = Encoder(3, 128, 3, 64, 1)
     encoder_out = encoder(x)
-    print("Encoder out shape:", encoder_out.shape)
+    print('Encoder out shape:', encoder_out.shape)
     # test encoder
     encoder = Encoder(3, 128, 3, 64, 2)
     encoder_out = encoder(x)
-    print("Encoder out shape:", encoder_out.shape)
+    print('Encoder out shape:', encoder_out.shape)
     # test encoder
     encoder = Encoder(3, 128, 3, 64, 3)
     encoder_out = encoder(x)
-    print("Encoder out shape:", encoder_out.shape)
+    print('Encoder out shape:', encoder_out.shape)
     # test encoder
     encoder = Encoder(3, 128, 3, 64, 4)
     encoder_out = encoder(x)
-    print("Encoder out shape:", encoder_out.shape)
+    print('Encoder out shape:', encoder_out.shape)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     test()

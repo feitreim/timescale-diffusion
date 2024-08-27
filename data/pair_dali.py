@@ -32,49 +32,39 @@ class ExternalInputCallable:
     def __setstate__(self, state):
         self.__dict__.update(state)
         # deferred setup happens now
-        df = plr.read_csv(
-            self.flist, has_header=False, new_columns=["filename"], separator="\n"
-        )
+        df = plr.read_csv(self.flist, has_header=False, new_columns=['filename'], separator='\n')
         # Shuffle the dataframe
         df = df.sample(fraction=1.0, seed=random.randint(0, 1000000), shuffle=True)
         # Split the filename into two parts
         df = df.with_columns(
             [
-                plr.col("filename").str.split("_").list.get(0).alias("x_label"),
-                plr.col("filename")
-                .str.split("_")
-                .list.get(1)
-                .str.strip_suffix(".jpg")
-                .alias("y_label"),
+                plr.col('filename').str.split('_').list.get(0).alias('x_label'),
+                plr.col('filename').str.split('_').list.get(1).str.strip_suffix('.jpg').alias('y_label'),
             ]
         )
         df = df.with_columns(
             [
-                plr.col("x_label")
+                plr.col('x_label')
                 .map_elements(
-                    lambda x: convert_timestamp_to_periodic_vec(
-                        torch.as_tensor([int(os.path.basename(x))])
-                    ),
+                    lambda x: convert_timestamp_to_periodic_vec(torch.as_tensor([int(os.path.basename(x))])),
                     return_dtype=plr.datatypes.Object,
                 )
-                .alias("x_periodic"),
-                plr.col("y_label")
+                .alias('x_periodic'),
+                plr.col('y_label')
                 .map_elements(
-                    lambda x: convert_timestamp_to_periodic_vec(
-                        torch.as_tensor([int(os.path.basename(x))])
-                    ),
+                    lambda x: convert_timestamp_to_periodic_vec(torch.as_tensor([int(os.path.basename(x))])),
                     return_dtype=plr.datatypes.Object,
                 )
-                .alias("y_periodic"),
+                .alias('y_periodic'),
             ]
         )
         # Get the number of files
         self.n = df.shape[0]
 
         # If you need lists instead of DataFrame columns
-        self.files = df["filename"].to_list()
-        self.x_labels = df["x_periodic"].to_list()
-        self.y_labels = df["y_periodic"].to_list()
+        self.files = df['filename'].to_list()
+        self.x_labels = df['x_periodic'].to_list()
+        self.y_labels = df['y_periodic'].to_list()
 
     def __call__(self, info):
         idx = info.iteration
@@ -84,7 +74,7 @@ class ExternalInputCallable:
         t_x = []
         t_y = []
         for i in range(self.batch_size):
-            f = open(self.dir + self.files[idx + i], "rb")
+            f = open(self.dir + self.files[idx + i], 'rb')
             batch.append(np.frombuffer(f.read(), dtype=np.uint8))
             t_x.append(np.array([self.x_labels[idx + i]], dtype=np.float32))
             t_y.append(np.array([self.y_labels[idx + i]], dtype=np.float32))
@@ -92,7 +82,7 @@ class ExternalInputCallable:
 
 
 @pipeline_def(
-    py_start_method="spawn",
+    py_start_method='spawn',
 )
 def img_pipe(
     ext_source,
@@ -103,16 +93,14 @@ def img_pipe(
     shard_id=0,
     num_devices=1,
 ):
-    j2ks, t_x, t_y = fn.external_source(
-        source=ext_source, batch=True, parallel=True, batch_info=True, num_outputs=3
-    )
+    j2ks, t_x, t_y = fn.external_source(source=ext_source, batch=True, parallel=True, batch_info=True, num_outputs=3)
 
     images = fn.decoders.image(
         j2ks,
         preallocate_height_hint=256,
         preallocate_width_hint=256,
         use_fast_idct=True,
-        device="mixed",
+        device='mixed',
     )
 
     reorder = fn.transpose(images, perm=[2, 0, 1])
@@ -153,7 +141,7 @@ class PairDataset(torch.utils.data.IterableDataset):
         num_devices=1,
     ):
         super().__init__()
-        self.name = f"Reader{shard_id}"
+        self.name = f'Reader{shard_id}'
         # Read the file list
         pipe = img_pipe(
             ext_source=ExternalInputCallable(flist, dir, batch_size),
@@ -168,17 +156,15 @@ class PairDataset(torch.utils.data.IterableDataset):
             device_id=shard_id,
         )
         self.pipe = pipe
-        self.pipeline = pydali.DALIGenericIterator(
-            self.pipe, output_map=["frames", "t_x", "t_y"]
-        )
+        self.pipeline = pydali.DALIGenericIterator(self.pipe, output_map=['frames', 't_x', 't_y'])
         self.periodic = periodic
 
     def __iter__(self):
         for data in enumerate(self.pipeline):
             frames, t_x, t_y = (
-                data[1][0]["frames"],
-                data[1][0]["t_x"],
-                data[1][0]["t_y"],
+                data[1][0]['frames'],
+                data[1][0]['t_x'],
+                data[1][0]['t_y'],
             )
 
             frames = frames.squeeze()
@@ -229,9 +215,9 @@ class PairDatamodule(pl.LightningDataModule):
 
     def setup(self, stage):
         super().setup(stage=stage)
-        self.local_rank = int(os.environ["LOCAL_RANK"])
+        self.local_rank = int(os.environ['LOCAL_RANK'])
 
-        self.name = f"Reader{self.local_rank}"
+        self.name = f'Reader{self.local_rank}'
         pipe = img_pipe(
             filelist=self.filelist,
             fill=self.fill,
@@ -252,20 +238,16 @@ class PairDatamodule(pl.LightningDataModule):
 
             def __next__(self):
                 out = super().__next__()
-                labels = out[0]["labels"]
-                frames = out[0]["frames"]
+                labels = out[0]['labels']
+                frames = out[0]['frames']
 
                 if self.periodic:
-                    label_list = [
-                        convert_timestamp_to_periodic(label) for label in labels
-                    ]
+                    label_list = [convert_timestamp_to_periodic(label) for label in labels]
                     labels = torch.stack(label_list)
 
                 return frames, labels
 
-        self.loader = LightningWrapper(
-            self.periodic, pipe, output_map=["frames", "labels"], reader_name=self.name
-        )
+        self.loader = LightningWrapper(self.periodic, pipe, output_map=['frames', 'labels'], reader_name=self.name)
 
     def train_dataloader(self):
         return self.loader

@@ -22,9 +22,7 @@ class ResDown(nn.Module):
     def __init__(self, in_dim, h_dim, kernel_size, padding):
         super().__init__()
         self.block = ResBlock(in_dim, h_dim, kernel_size, padding)
-        self.down = nn.Conv2d(
-            in_dim, h_dim, kernel_size=kernel_size, stride=2, padding=padding
-        )
+        self.down = nn.Conv2d(in_dim, h_dim, kernel_size=kernel_size, stride=2, padding=padding)
         self.act = nn.Tanh()
 
     def forward(self, x, t):

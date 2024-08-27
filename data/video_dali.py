@@ -33,7 +33,7 @@ def video_pipeline(
     shuffle,
 ):
     frames, labels, frame_number = fn.readers.video_resize(
-        device="gpu",
+        device='gpu',
         additional_decode_surfaces=4,
         filenames=filenames,
         sequence_length=sequence_length,
@@ -44,7 +44,7 @@ def video_pipeline(
         enable_frame_num=True,
         stride=mf_distance,
         size=output_size,
-        mode="stretch",
+        mode='stretch',
         minibatch_size=32,
         read_ahead=True,
         prefetch_queue_depth=2,
@@ -93,7 +93,7 @@ class DALIDataset(torch.utils.data.IterableDataset):
         shuffle=True,
     ):
         super().__init__()
-        self.name = f"Reader{device_id}"
+        self.name = f'Reader{device_id}'
         pipe = video_pipeline(
             filenames=video_file_paths,
             sequence_length=sequence_length,
@@ -110,9 +110,7 @@ class DALIDataset(torch.utils.data.IterableDataset):
             prefetch_queue_depth=4,
             set_affinity=True,
         )
-        self.pipeline = pydali.DALIGenericIterator(
-            pipe, output_map=["frames", "labels", "frame_number"], reader_name=self.name
-        )
+        self.pipeline = pydali.DALIGenericIterator(pipe, output_map=['frames', 'labels', 'frame_number'], reader_name=self.name)
         self.video_timestamps = []
         self.compute_frame_timestamps(video_file_paths)
         self.offsets = [i * mf_distance for i in range(sequence_length)]
@@ -121,24 +119,20 @@ class DALIDataset(torch.utils.data.IterableDataset):
     def __iter__(self):
         for data in enumerate(self.pipeline):
             frames, labels, frame_number = (
-                data[1][0]["frames"],
-                data[1][0]["labels"],
-                data[1][0]["frame_number"],
+                data[1][0]['frames'],
+                data[1][0]['labels'],
+                data[1][0]['frame_number'],
             )
 
             # frames = rearrange(frames, "B S C H W -> (B S) C H W")
-            timestamps = torch.empty(
-                (frames.shape[0], frames.shape[1], 7), dtype=torch.float32
-            )
+            timestamps = torch.empty((frames.shape[0], frames.shape[1], 7), dtype=torch.float32)
             for idx, l in enumerate(labels):
                 label = l[0]
                 base_timestamp = self.video_timestamps[label]
                 timestamp_with_frame = base_timestamp + frame_number[idx]
                 for i, off in enumerate(self.offsets):
                     timestamp_w_offset = timestamp_with_frame + off
-                    timestamps[idx, i] = convert_timestamp_to_periodic(
-                        timestamp_w_offset, fps=30
-                    ).squeeze()
+                    timestamps[idx, i] = convert_timestamp_to_periodic(timestamp_w_offset, fps=30).squeeze()
 
             yield frames, timestamps
 
@@ -157,12 +151,10 @@ class DALIDataset(torch.utils.data.IterableDataset):
 
         for path in video_file_paths:
             # Isolate date/time strings
-            filename = path.split("/")[-1]
-            filename = filename.casefold().strip(
-                "adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/"
-            )
-            yearmonthday = filename.split("_")[0]
-            hourminsec = filename.split("_")[-1]
+            filename = path.split('/')[-1]
+            filename = filename.casefold().strip("adcdefghijklmnopqrstuvwxyz,.;'[]{}:<>?/")
+            yearmonthday = filename.split('_')[0]
+            hourminsec = filename.split('_')[-1]
 
             # Create substring of all info
             date_info = []
@@ -235,7 +227,7 @@ class LightningDaliLoader(pl.LightningDataModule):
 
     def setup(self, stage):
         super().setup(stage=stage)
-        self.local_rank = int(os.environ["LOCAL_RANK"])
+        self.local_rank = int(os.environ['LOCAL_RANK'])
         self.dataset = DALIDataset(
             self.video_file_paths,
             self.sequence_length,
