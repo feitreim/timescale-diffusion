@@ -37,7 +37,7 @@ res_h_dim = 64
 n_res_layers = 4
 n_embeddings = 2048
 stacks = 3
-embedding_dim = 7
+embedding_dim = 8
 beta = 0.5
 
 [compile]

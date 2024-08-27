@@ -51,9 +51,8 @@ def convert_timestamp_to_periodic_vec(x: torch.Tensor, offset=0):
     """
     formula:
     forall t
-              pi(x + (t/4))
-         sin( ------------  )
-                 t/2
+         sin( (pi * x) / (t/2) )
+         cos( (pi * x) / (t/2) )
     in:
         x: [B, 1] or [B]
         offset: int, num frames since midnight jan 1st

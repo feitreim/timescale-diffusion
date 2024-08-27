@@ -21,9 +21,7 @@ dependencies = [
 	"numpy",
 	"scikit-learn",
 	"av",
-	"imageio",
 	"pims",
-	"sk-video",
 	"wandb",
 	"pip-system-certs",
 	"typing",
@@ -32,15 +30,12 @@ dependencies = [
 	"tqdm",
 	"matplotlib",
 	"pandas",
-	"seaborn",
 	"ruff",
-	"dill",
 ]
 
 [tool.uv]
 dev-dependencies = []
-cache-dir = "/scratch_ssd/research-groups/wehrwein/.uvcache"
-link-mode = "symlink"
+cache-dir = "/cluster/research-groups/wehrwein/home/finn/.uvcache"
 
 [tool.setuptools]
 py-modules = ['tspm', 'data', 'vqvae', 'wandb', 'blocks', 'losses', 'configs', 'datasets', 'artifacts', 'condor_logs', 'experiments']

@@ -32,7 +32,7 @@ class SVAE(nn.Module):
     ) -> None:
         super().__init__()
         self.encoder = Encoder(3, h_dim, n_res_layers, res_h_dim, 3)
-        in_feat = 5 * 32 * 32
+        in_feat = n_embeddings * 32 * 32
         self.latent_dense = nn.Linear(in_feat, 5)
         self.e_dim = embedding_dim
         self.pre_quantization_conv = nn.Parameter(
@@ -45,9 +45,9 @@ class SVAE(nn.Module):
 
     def forward(self, x):
         z = self.encoder(x)
-        t_hat = self.to_latent(z[:, :5])
-        t_hat = t_hat.unsqueeze(1).expand(-1, 2, -1)
         z_pq = fn.conv2d(z, self.pre_quantization_conv)
+        t_hat = self.to_latent(z_pq)
+        t_hat = t_hat.unsqueeze(1).expand(-1, 2, -1)
         embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
         y_hat = self.decoder(z_q, t_hat)
         return embedding_loss, y_hat, perplexity, z_q
@@ -55,16 +55,16 @@ class SVAE(nn.Module):
     def to_latent(self, z):
         return fn.tanh(self.latent_dense(z.flatten(1)))
 
-    @torch.compile(mode="max-autotune", fullgraph=True)
+    # @torch.compile(mode="max-autotune", fullgraph=True)
     def generate_latent_and_timecode(self, x):
         z = self.encoder(x)
-        t_hat = self.to_latent(z[:, :5])
+        z_pq = fn.conv2d(z, self.pre_quantization_conv)
+        t_hat = self.to_latent(z_pq)
         return z, t_hat
 
-    @torch.compile(mode="max-autotune", fullgraph=True)
+    # @torch.compile(mode="max-autotune", fullgraph=True)
     def predict(self, z, t):
-        z_pq = fn.conv2d(z, self.pre_quantization_conv)
-        embedding_loss, z_q, perplexity, _, _ = self.vq(z_pq)
+        embedding_loss, z_q, perplexity, _, _ = self.vq(z)
         y_hat = self.decoder(z_q, t)
         return embedding_loss, y_hat, perplexity, z_q
 
@@ -204,6 +204,15 @@ if __name__ == "__main__":
         input_size=(batch_size, 3, 256, 256),
     )
     model = model.to(device)
+
+    test_tensor = torch.rand((32, 3, 256, 256), device=device)
+    test_t = torch.rand((32, 2, 5), device=device)
+
+    test_z, _ = model.generate_latent_and_timecode(test_tensor)
+    embed_loss_x, y_test, perp_x, z = model.predict(test_z, test_t)
+
+    test_loss = torch.abs(y_test - test_tensor).mean()
+    test_loss.backward()
 
     # optim
     optim = schedulefree.AdamWScheduleFree(
