@@ -18,19 +18,19 @@ class Decoder(nn.Module):
 
     """
 
-    def __init__(self, in_dim, h_dim, n_res_layers, res_h_dim, stacks):
+    def __init__(self, in_dim, h_dim, n_res_layers, res_h_dim, stacks, out_dim):
         super(Decoder, self).__init__()
         kernel = 4
         stride = 2
 
-        inverse_conv_stack = build_inv_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_layers)
+        inverse_conv_stack = build_inv_conv_stack(stacks, in_dim, out_dim, h_dim, kernel, stride, res_h_dim, n_res_layers)
         self.inverse_conv_stack = nn.Sequential(*inverse_conv_stack)
 
     def forward(self, x):
         return self.inverse_conv_stack(x)
 
 
-def build_inv_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_layers):
+def build_inv_conv_stack(stacks, in_dim, out_dim, h_dim, kernel, stride, res_h_dim, n_res_layers):
     conv_stack = []
     conv_stack += [
         nn.ConvTranspose2d(in_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
@@ -47,13 +47,13 @@ def build_inv_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res
                 stride=stride,
                 padding=1,
             ),
-            nn.ReLU(True),
+            nn.ReLU(),
         ]
     else:
         conv_stack += [
             nn.ConvTranspose2d(
                 h_dim // 2,
-                3,
+                out_dim,
                 kernel_size=kernel - 1,
                 stride=stride - 1,
                 padding=1,
@@ -70,18 +70,18 @@ def build_inv_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res
         ]
     else:
         conv_stack += [
-            nn.ConvTranspose2d(h_dim, 3, kernel_size=kernel - 1, stride=stride - 1, padding=1),
+            nn.ConvTranspose2d(h_dim, out_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             nn.Sigmoid(),
         ]
         return conv_stack
     if stacks >= 4:
         conv_stack += [
-            nn.ConvTranspose2d(h_dim // 2, 3, kernel_size=kernel, stride=stride, padding=1),
+            nn.ConvTranspose2d(h_dim // 2, out_dim, kernel_size=kernel, stride=stride, padding=1),
             nn.Sigmoid(),
         ]
     else:
         conv_stack += [
-            nn.ConvTranspose2d(h_dim // 2, 3, kernel_size=kernel - 1, stride=stride - 1, padding=1),
+            nn.ConvTranspose2d(h_dim // 2, out_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             nn.Sigmoid(),
         ]
     return conv_stack

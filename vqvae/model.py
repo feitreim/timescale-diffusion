@@ -34,7 +34,7 @@ class VQVAE(nn.Module):
         # pass continuous latent vector through discretization bottleneck
         self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
         # decode the discrete latent representation
-        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks)
+        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks, 3)
 
         if save_img_embedding_map:
             self.img_to_embedding_map = {i: [] for i in range(n_embeddings)}
@@ -53,11 +53,10 @@ class VQVAE(nn.Module):
     def generate_latent(self, x):
         """
         First Half of the forward pass, returns just a latent embedding.
+        out: (latent)
         """
         z_e = self.encoder(x)
-
-        latent = self.pre_quantization_conv(z_e)
-        return latent
+        return self.pre_quantization_conv(z_e)
 
     def generate_output_from_latent(self, latent):
         """

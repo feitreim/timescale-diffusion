@@ -1,3 +1,15 @@
+# /// script
+# dependencies = [
+#   "opencv-python",
+#   "torchvision",
+#   "torch",
+#   "toml",
+#   "argparse",
+#   "tqdm",
+#   "av"
+# ]
+# ///
+
 import torchvision
 import torch
 import queue
@@ -62,6 +74,7 @@ def process_pair(pair: VideoPair, root):
     sub_dir = Path(root) / str(pair.lhs_offset)
     os.makedirs(sub_dir, exist_ok=True)
 
+    total = 0
     for l_idx, r_idx in tqdm(pair.pairs):
         if l_idx < l_len and r_idx < r_len:
             l_video.seek(l_idx / fps)
@@ -70,27 +83,8 @@ def process_pair(pair: VideoPair, root):
             combined = torch.cat([l_frame, r_frame], dim=-1)
             fname = sub_dir / f'{pair.lhs_offset + l_idx}_{pair.rhs_offset + r_idx}.jpg'
             torchvision.io.write_jpeg(combined, fname, quality=100)
-
-    while i < l_len and i + max_distance < t_len:
-        distance = random.randint(0, max_distance)
-        if i + distance >= l_len:
-            l_video.seek(i / fps)
-            l_frame = next(l_video)['data']
-            idx = (i + distance - l_len) / fps
-            idx = idx if idx > 0 else 1
-            r_video.seek(idx)
-            r_frame = next(r_video)['data']
-        else:
-            l_video.seek(i / fps)
-            l_frame = next(l_video)['data']
-            l_video.seek((i + distance) / fps)
-            r_frame = next(l_video)['data']
-        combined = torch.cat([l_frame, r_frame], dim=-1)
-        fname = sub_dir / f'{offset+i}_{offset+i+distance}.jpg'
-        torchvision.io.write_jpeg(combined, fname, quality=100)
-        i += step + random.randint(-step // 2, step // 2)
-        total += 1
-        print(f'saved file {fname}. this proc saved {total}')
+            total += 1
+            print(f'saved file {fname}. this proc saved {total}')
 
     return total
 
@@ -120,7 +114,7 @@ def video_loop(current, pairs, offsets, distances, step):
 def compute_pair_from_tensor(pair_tensor, i, j):
     pairs = []
     for pair in pair_tensor[i, j]:
-        pairs.append([pair[0], pair[1]])
+        pairs.append([pair[0].item(), pair[1].item()])
     return pairs
 
 
@@ -217,11 +211,11 @@ def main():
 
     vids = config['videos']
     offsets = compute_frame_timestamps(vids[0], vids)
-
+    print(len(vids))
     distances = config['distances']
 
     pairs = compute_video_pairs(vids, offsets, distances, args.step)
-
+    print(pairs)
     # sharding
     shard_size = len(pairs) // args.num_shards
     start = shard_size * args.shard
@@ -238,14 +232,10 @@ def main():
         result_queue = mp.Manager().Queue()
         args_list = [
             (
-                lhs_vids[i],
-                rhs_vids[i],
-                args.distance,
-                args.step,
-                offsets[i],
+                pairs[i],
                 args.output_path,
             )
-            for i in range(len(lhs_vids))
+            for i in range(len(pairs))
         ]
         for result in pool.starmap(process_pair, args_list):
             result_queue.put(result)
