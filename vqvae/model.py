@@ -42,28 +42,56 @@ class VQVAE(nn.Module):
             self.img_to_embedding_map = None
 
     def forward(self, x):
-        z_e = self.encoder(x)
+        """
+        Forward pass of the VQVAE model.
 
+        args:
+            x: Input tensor.
+
+        returns:
+            - embedding_loss: Loss from vector quantization.
+            - x_hat: Reconstructed output tensor.
+            - perplexity: Perplexity of the codebook usage.
+            - z_e: Encoded latent representation before quantization.
+        """
+        z_e = self.encoder(x)
         z_e = self.pre_quantization_conv(z_e)
         embedding_loss, z_q, perplexity, _, _ = self.vector_quantization(z_e)
         x_hat = self.decoder(z_q)
-
         return embedding_loss, x_hat, perplexity, z_e
+
+    def quantize(self, z):
+        """
+        args:
+            - z: latent code
+
+        returns:
+            - z_q: quantized latent code
+        """
+        return self.vector_quantization(z)
 
     def generate_latent(self, x):
         """
-        First Half of the forward pass, returns just a latent embedding.
-        out: (latent)
+        args:
+            - x: input image
+
+        returns:
+            - latent: latent embedding
         """
         z_e = self.encoder(x)
         return self.pre_quantization_conv(z_e)
 
     def generate_output_from_latent(self, latent):
         """
-        Generate the output image from a continous latent space.
+        args:
+            - latent: continuous latent space
+
+        returns:
+            - embedding_loss: loss from vector quantization
+            - x_hat: reconstructed output image
+            - perplexity: perplexity of the codebook usage
+            - latent: input latent space
         """
         embedding_loss, z_q, perplexity, _, _ = self.vector_quantization(latent)
-
         x_hat = self.decoder(z_q)
-
         return embedding_loss, x_hat, perplexity, latent

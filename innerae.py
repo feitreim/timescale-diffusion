@@ -26,6 +26,21 @@ from vqvae.blocks.decoder import Decoder
 from tspm.attention import AttnBlock
 from tspm.time import TimeEmbedding2D
 
+"""
+current training:
+
+┌───┐         ┌─────┐   ┌───┐      ┌─────┐    ┌───┐  
+│ X ├─────────▶Outer├───▶s_x├──────▶Outer├────▶ x │  
+├───┤         │Model│   ├───┤      │Model│    ├───┤  
+│ Y ├─────────▶ Enc ├───▶s_y├──────▶ Dec ├────▶ y │  
+└───┘         └─────┘   └───┘      └─────┘    └───┘  
+           ┌─────┐                    ┌─────┐        
+┌───┐      │Inner│  ┌───┐cross ┌───┐  │Inner│   ┌───┐
+│s_x├──────▶Model├──▶z_x├──────▶z_y├──▶Model├───▶s_y│
+└───┘      │ Enc │  └───┘attn. └───┘  │ Dec │   └───┘
+           └─────┘                    └─────┘        
+"""
+
 
 # -------------- Model
 class TSVAE(nn.Module):
@@ -42,16 +57,17 @@ class TSVAE(nn.Module):
         super().__init__()
         self.encoder = Encoder(in_dim, h_dim, n_res_layers, res_h_dim, stacks)
         self.time_embedding = TimeEmbedding2D(10, e_dim)
-        self.attention = [AttnBlock(e_dim) for _ in range(heads)]
+        self.attention = nn.ModuleList([AttnBlock(e_dim) for _ in range(heads)])
         self.decoder = Decoder(h_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
 
     def forward(self, s_x, t_xy):
         """
         s_x -> z_x
-        z_x, t_xy -> z_y ( cross attn )
+        z_x, t_xy -> z_y (cross attn)
         z_y -> s_y
 
-        out: ( s_y, z_x, z_y )
+        Returns:
+            tuple: (s_y, z_x, z_y)
         """
         z = self.encoder(s_x)
         z_x = z.clone()
@@ -59,6 +75,50 @@ class TSVAE(nn.Module):
         for attn in self.attention:
             z = attn(z, t_xy)
         return self.decoder(z), z_x, z
+
+
+class BigModel(nn.Module):
+    def __init__(self, outer: VQVAE, inner: TSVAE):
+        super().__init__()
+        self.outer = outer
+        self.inner = inner
+
+    def forward(self, x, t_xy):
+        """
+        args:
+            x: input image
+            t_xy: time difference between x and y
+        return:
+            embedding_loss: VQ embedding loss
+            y_hat: reconstructed output image
+            perplexity: VQ codebook usage
+            s_y: structural latent of y
+        """
+        s_x = self.outer.generate_latent(x)
+        s_y, _, _ = self.inner(s_x, t_xy)
+        embedding_loss, y_hat, perplexity, _ = self.outer.generate_output_from_latent(s_y)
+        return embedding_loss, y_hat, perplexity, s_y
+
+    @torch.compile(mode='max-autotune', fullgraph=True)
+    def outer_pass(self, x):
+        """
+        return:
+            embedding_loss: VQ embedding loss
+            x_hat: reconstructed output image
+            perplexity: VQ codebook usage
+            s_x: structural latent of x
+        """
+        return self.outer(x)
+
+    @torch.compile(mode='max-autotune', fullgraph=True)
+    def inner_pass(self, s_x, t_xy):
+        """
+        return:
+            s_y: structural latent for y
+            z_x: latent for x
+            z_y: latent for y
+        """
+        return self.inner(s_x, t_xy)
 
 
 # -------------- Functions
@@ -78,24 +138,21 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    s_x = outer_model.generate_latent(x)
-    s_y = outer_model.generate_latent(y)
-    embed_loss_x, x_hat, perp_x, _ = outer_model.generate_output_from_latent(s_x)
-    embed_loss_y, y_hat, perp_y, _ = outer_model.generate_output_from_latent(s_y)
+    embed_loss_x, x_hat, perp_x, s_x = model.outer_pass(x)
+    embed_loss_y, y_hat, perp_y, s_y = model.outer_pass(y)
     recon_loss_x, recon_loss_y = ssim_loss(x_hat, x), ssim_loss(y_hat, y)
     outer_loss = recon_loss_x + recon_loss_y + embed_loss_x + embed_loss_y
 
-    outer_optim.zero_grad()
-    outer_loss.backward()
-    outer_optim.step()
-
-    s_y = s_y.detach()
-    s_y_hat, _, _ = inner_model(s_x, t)
+    s_x = s_x.detach().clone()
+    s_y = s_x.detach().clone()
+    s_y_hat, _, _ = model.inner_pass(s_x, t)
     inner_loss = torch.pow(s_y - s_y_hat, 2.0).mean()
 
-    inner_optim.zero_grad()
-    inner_loss.backward()
-    inner_optim.step()
+    loss = inner_loss + outer_loss
+
+    optim.zero_grad()
+    loss.backward()
+    optim.step()
 
     if batch_idx % logging_rate == 0:
         psnr_x = psnr(y_hat, y)
@@ -106,7 +163,7 @@ def training_step(batch_idx, batch):
         mean_embed = (embed_loss_x.item() + embed_loss_y.item()) / 2
 
         with torch.no_grad():
-            _, recon, _, _ = outer_model.generate_output_from_latent(s_y_hat)
+            _, recon, _, _ = model.outer.generate_output_from_latent(s_y_hat)
         psnr_i = psnr(recon, y)
         ssim_i = ssim(recon, y)
         msssim_i = ms_ssim(recon, y)
@@ -114,6 +171,7 @@ def training_step(batch_idx, batch):
         wandb.log(
             {
                 'train/outer_loss': outer_loss.item(),
+                'train/inner_loss': inner_loss.item(),
                 'train/recon_loss': mean_recon,
                 'train/perplexity': mean_perp,
                 'train/embed_loss': mean_embed,
@@ -128,28 +186,49 @@ def training_step(batch_idx, batch):
 
     if batch_idx % img_logging_rate == 0:
         with torch.no_grad():
-            _, recon, _, _ = outer_model.generate_output_from_latent(s_y_hat)
+            _, recon, _, _ = model.outer.generate_output_from_latent(s_y_hat)
         caption = 'x, x_hat, y_hat (predicted), y_hat (no inner), y'
         mosaic = torch.cat([x[:4], x_hat[:4], recon[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
-@torch.no_grad
-def validation_step(
-    batch_idx,
-    batch,
-    psnr,
-):
-    x, y, t = unpack(batch, device)
+def warmup_vqvae(batch_idx, batch):
+    x, y, _ = unpack(batch, device)
 
-    (embed_loss_x, embed_loss_y, x_hat, y_hat, perp_x, perp_y) = model(x, t)
+    embed_loss_x, x_hat, perp_x, _ = model.outer_pass(x)
+    embed_loss_y, y_hat, perp_y, _ = model.outer_pass(y)
+    recon_loss_x, recon_loss_y = ssim_loss(x_hat, x), ssim_loss(y_hat, y)
+    outer_loss = recon_loss_x + recon_loss_y + embed_loss_x + embed_loss_y
 
-    loss = ssim_loss(x_hat, y)
-    psnr_x = psnr(x_hat, x)
-    psnr_y = psnr(y_hat, y)
+    loss = outer_loss
 
-    if batch_idx % 10 == 0:
-        wandb.log({'val/loss': loss.item()})
+    optim.zero_grad()
+    loss.backward()
+    optim.step()
+
+    if batch_idx % logging_rate == 0:
+        psnr_x = psnr(y_hat, y)
+        ssim_x = ssim(y_hat, y)
+        msssim_x = ms_ssim(y_hat, y)
+        mean_perp = (perp_x.item() + perp_y.item()) / 2
+        mean_recon = (recon_loss_x.item() + recon_loss_y.item()) / 2
+        mean_embed = (embed_loss_x.item() + embed_loss_y.item()) / 2
+        wandb.log(
+            {
+                'train/outer_loss': outer_loss.item(),
+                'train/recon_loss': mean_recon,
+                'train/perplexity': mean_perp,
+                'train/embed_loss': mean_embed,
+                'train/psnr': psnr_x.item(),
+                'train/ssim': ssim_x.item(),
+                'train/ms-ssim': msssim_x.item(),
+            }
+        )
+
+    if batch_idx % 2500 == 0:
+        caption = 'x, x_hat, y_hat (no inner), y'
+        mosaic = torch.cat([x[:4], x_hat[:4], y_hat[:4], y[:4]], dim=-1)
+        wandb.log({'train/warmup_images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
 @torch.no_grad
@@ -189,30 +268,13 @@ if __name__ == '__main__':
     img_logging_rate = config['hp']['img_logging_rate'] if 'img_logging_rate' in config['hp'] else logging_rate**2
 
     # Model(s)
-    outer_model = VQVAE(**config['vqvae'])
-    summary(
-        outer_model,
-        depth=4,
-        input_size=(batch_size, 3, 256, 256),
-    )
-    outer_model = outer_model.to(device)
+    _outer_model = VQVAE(**config['vqvae'])
+    _inner_model = TSVAE(**config['tsvae'])
+    model = BigModel(_outer_model, _inner_model)
+    summary(model, device=device, depth=4, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
 
-    inner_model = TSVAE(**config['tsvae'])
-    summary(inner_model, depth=4, input_size=((batch_size, 64, 64, 64), (batch_size, 2, 10)))
-    inner_model = inner_model.to(device)
     # optim
-    outer_optim = schedulefree.AdamWScheduleFree(outer_model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
-    inner_optim = schedulefree.AdamWScheduleFree(inner_model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
-    # ema of weights
-    ema_id = random.randint(0, 2000000)
-    ema_path = f'./.running_avgs/{ema_id}/'
-    ema_beta = config['ema']['beta']
-    ema_enabled = config['ema']['enabled']
-    ema_interval = config['ema']['interval']
-    ema_start = config['ema']['start']
-    Path(ema_path).mkdir(parents=True, exist_ok=True)
-    ema_path = Path(ema_path) / 'lastweight.ckpt'
-    torch.save(inner_model, ema_path)
+    optim = schedulefree.AdamWScheduleFree(model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
 
     # loss
     ssim_loss = MixReconstructionLoss()
@@ -227,23 +289,23 @@ if __name__ == '__main__':
     # val_dataset = FrameDataset(**config['val_data'])
     # wandb
     wandb.init(project='timescale-diffusion', name=args.name)
-    save_model(inner_model)
+    save_model(model)
+
     e = 0
     while e < num_epochs:
         wandb.log({'epoch': e})
         try:
             for batch_idx, batch in tqdm(enumerate(dataset)):
-                training_step(batch_idx, batch)
-                if batch_idx % ema_interval == 0 and batch_idx > ema_start and ema_enabled:
-                    running_average_weights(inner_model, ema_path, ema_beta)
-                elif batch_idx % ema_interval == 0 and ema_enabled:
-                    torch.save(inner_model, ema_path)
+                if batch_idx < 10_000:
+                    warmup_vqvae(batch_idx, batch)
+                else:
+                    training_step(batch_idx, batch)
                 if batch_idx >= epoch_size:
-                    save_model(inner_model)
+                    save_model(model)
                     break
         except Exception as ex:  # noqa: E722
             print(ex)
-            save_model(inner_model)
+            save_model(model)
             del dataset
             gc.collect()
             dataset = PairDataset(**config['data'])
