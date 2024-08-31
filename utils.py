@@ -72,8 +72,8 @@ def convert_timestamp_to_periodic_vec(x: torch.Tensor, offset=0):
 
 def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:
     x, y, t_x, t_y = batch
-    x = x.to(device)
-    y = y.to(device)
+    x = x.to(device, memory_format=torch.channels_last)
+    y = y.to(device, memory_format=torch.channels_last)
     t = torch.stack([t_x, t_y], dim=1).to(device)
     return x, y, t
 

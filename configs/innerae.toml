@@ -16,7 +16,7 @@ beta = 0.9
 interval = 1000
 start = 20000
 
-[vqvae]
+[outer]
 h_dim = 128
 res_h_dim = 64
 n_res_layers = 4
@@ -25,14 +25,16 @@ stacks = 2
 embedding_dim = 64
 beta = 0.5
 
-[tsvae]
+[inner]
 in_dim = 64
 h_dim = 128
 res_h_dim = 64
 n_res_layers = 4
-stacks = 3
+stacks = 2
 e_dim = 64
 heads = 8
+n_embeddings = 1024
+beta = 0.5
 
 [compile]
 fullgraph = true

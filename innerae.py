@@ -23,6 +23,7 @@ from utils import unpack, convert_timestamp_to_periodic_vec
 from vqvae.model import VQVAE
 from vqvae.blocks.encoder import Encoder
 from vqvae.blocks.decoder import Decoder
+from vqvae.blocks.quantizer import VectorQuantizer
 from tspm.attention import AttnBlock
 from tspm.time import TimeEmbedding2D
 
@@ -53,11 +54,12 @@ class TSVAE(nn.Module):
     the intermediate representation is in z space
     """
 
-    def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads) -> None:
+    def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads, n_embeddings, beta) -> None:
         super().__init__()
         self.encoder = Encoder(in_dim, h_dim, n_res_layers, res_h_dim, stacks)
         self.time_embedding = TimeEmbedding2D(10, e_dim)
         self.attention = nn.ModuleList([AttnBlock(e_dim) for _ in range(heads)])
+        self.vector_quantization = VectorQuantizer(n_embeddings, h_dim, beta)
         self.decoder = Decoder(h_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
 
     def forward(self, s_x, t_xy):
@@ -70,11 +72,11 @@ class TSVAE(nn.Module):
             tuple: (s_y, z_x, z_y)
         """
         z = self.encoder(s_x)
-        z_x = z.clone()
         t_xy = self.time_embedding(t_xy.flatten(1))
         for attn in self.attention:
             z = attn(z, t_xy)
-        return self.decoder(z), z_x, z
+        embed_loss, z_q, perp, _, _ = self.vector_quantization(z)
+        return embed_loss, self.decoder(z_q), perp, z
 
 
 class BigModel(nn.Module):
@@ -89,15 +91,17 @@ class BigModel(nn.Module):
             x: input image
             t_xy: time difference between x and y
         return:
-            embedding_loss: VQ embedding loss
             y_hat: reconstructed output image
-            perplexity: VQ codebook usage
+            embed_loss_inner: VQ embedding loss for inner model
+            embed_loss_outer: VQ embedding loss for outer model
+            perplexity_inner: VQ codebook usage for inner model
+            perplexity_outer: VQ codebook usage for outer model
             s_y: structural latent of y
         """
         s_x = self.outer.generate_latent(x)
-        s_y, _, _ = self.inner(s_x, t_xy)
-        embedding_loss, y_hat, perplexity, _ = self.outer.generate_output_from_latent(s_y)
-        return embedding_loss, y_hat, perplexity, s_y
+        embed_loss_inner, s_y, perplexity_inner, _ = self.inner(s_x, t_xy)
+        embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s_y)
+        return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
 
     @torch.compile(mode='max-autotune', fullgraph=True)
     def outer_pass(self, x):
@@ -143,13 +147,10 @@ def training_step(batch_idx, batch):
     recon_loss_x, recon_loss_y = ssim_loss(x_hat, x), ssim_loss(y_hat, y)
     outer_loss = recon_loss_x + recon_loss_y + embed_loss_x + embed_loss_y
 
-    s_x = s_x.detach().clone()
-    s_y = s_x.detach().clone()
-    s_y_hat, _, _ = model.inner_pass(s_x, t)
-    inner_loss = torch.pow(s_y - s_y_hat, 2.0).mean()
+    embed_loss_inner, s_y_hat, perplexity_inner, _ = model.inner_pass(s_x, t)
+    inner_loss = torch.pow(s_y - s_y_hat, 2.0).mean() + embed_loss_inner
 
     loss = inner_loss + outer_loss
-
     optim.zero_grad()
     loss.backward()
     optim.step()
@@ -174,6 +175,7 @@ def training_step(batch_idx, batch):
                 'train/inner_loss': inner_loss.item(),
                 'train/recon_loss': mean_recon,
                 'train/perplexity': mean_perp,
+                'train/perplexity_inner': perplexity_inner.item(),
                 'train/embed_loss': mean_embed,
                 'train/psnr': psnr_x.item(),
                 'train/ssim': ssim_x.item(),
@@ -268,10 +270,11 @@ if __name__ == '__main__':
     img_logging_rate = config['hp']['img_logging_rate'] if 'img_logging_rate' in config['hp'] else logging_rate**2
 
     # Model(s)
-    _outer_model = VQVAE(**config['vqvae'])
-    _inner_model = TSVAE(**config['tsvae'])
+    _outer_model = VQVAE(**config['outer'])
+    _inner_model = TSVAE(**config['inner'])
     model = BigModel(_outer_model, _inner_model)
     summary(model, device=device, depth=4, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
+    model.to(memory_format=torch.channels_last)
 
     # optim
     optim = schedulefree.AdamWScheduleFree(model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
@@ -296,7 +299,7 @@ if __name__ == '__main__':
         wandb.log({'epoch': e})
         try:
             for batch_idx, batch in tqdm(enumerate(dataset)):
-                if batch_idx < 10_000:
+                if batch_idx < 10_000 and e == 0:
                     warmup_vqvae(batch_idx, batch)
                 else:
                     training_step(batch_idx, batch)
