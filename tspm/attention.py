@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as f
+from torch.nn.init import xavier_uniform_ as _xav
 from torch import Tensor
 
 from tspm.resnet import ResBlock
@@ -16,13 +17,13 @@ class AttnBlock(nn.Module):
 
     def __init__(self, e_dim):
         super().__init__()
-        self.q_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim), requires_grad=True)
-        self.kv_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim * 2), requires_grad=True)
-        self.attn_proj = torch.nn.Parameter(torch.randn(1, e_dim, e_dim), requires_grad=True)
-        self.mlp_up = torch.nn.Parameter(torch.randn(1, e_dim, e_dim * 2), requires_grad=True)
+        self.q_proj = torch.nn.Parameter(_xav(torch.randn(1, e_dim, e_dim)), requires_grad=True)
+        self.kv_proj = torch.nn.Parameter(_xav(torch.randn(1, e_dim, e_dim * 2)), requires_grad=True)
+        self.attn_proj = torch.nn.Parameter(_xav(torch.randn(1, e_dim, e_dim)), requires_grad=True)
+        self.mlp_up = torch.nn.Parameter(_xav(torch.randn(1, e_dim, e_dim * 2)), requires_grad=True)
         # S = 256 hard coded rn
-        self.mlp_bias = torch.nn.Parameter(torch.randn(1, e_dim * 2, e_dim * 2), requires_grad=True)
-        self.mlp_down = torch.nn.Parameter(torch.randn(1, e_dim * 2, e_dim), requires_grad=True)
+        self.mlp_bias = torch.nn.Parameter(_xav(torch.randn(1, e_dim * 2, e_dim * 2)), requires_grad=True)
+        self.mlp_down = torch.nn.Parameter(_xav(torch.randn(1, e_dim * 2, e_dim)), requires_grad=True)
 
         self.e_dim = e_dim
         self.norm = nn.LayerNorm(e_dim)
@@ -44,7 +45,6 @@ class AttnBlock(nn.Module):
         k, v = self.norm(k), self.norm(v)
         # take the attention map (phi) and add it to (x)
         r = f.scaled_dot_product_attention(q, k, v) @ self.attn_proj
-        print(r.shape)
         r = f.gelu((r @ self.mlp_up) + self.mlp_bias)
         x = x + (r @ self.mlp_down)
         return x.reshape(*shape).to(memory_format=torch.channels_last)

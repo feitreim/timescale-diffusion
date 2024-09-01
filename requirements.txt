@@ -6,9 +6,7 @@ torchinfo
 pytorch-lightning
 einops
 schedulefree
-nvidia-dali-cuda120
 polars
-nvidia-nvjpeg2k-cu12
 torch-fidelity
 # Libraries for metric calculation
 numpy
@@ -28,6 +26,3 @@ toml
 tqdm
 matplotlib
 pandas
-seaborn
-ruff
-dill

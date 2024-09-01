@@ -105,9 +105,9 @@ docstring-code-format = false
 docstring-code-line-length = "dynamic"
 
 [tool.pyright]
-include = ["."]
+include = ["./", "tspm", "vqvae", "experiments"]
 venv = ".venv"
-venvPath = "./.venv"
+venvPath = "./"
 reportFunctionMemberAccess = false
 
 
