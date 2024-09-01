@@ -23,7 +23,7 @@ n_res_layers = 4
 n_embeddings = 1024
 stacks = 2
 embedding_dim = 64
-beta = 0.25
+beta = 0.5
 
 [inner]
 in_dim = 64
@@ -32,8 +32,8 @@ res_h_dim = 64
 n_res_layers = 4
 stacks = 2
 e_dim = 128
-heads = 4
-n_embeddings = 512
+heads = 8
+n_embeddings = 1024
 embedding_dim = 32
 beta = 0.25
 

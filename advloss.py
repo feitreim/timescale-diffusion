@@ -164,7 +164,7 @@ class Discriminator:
             x = fn.batch_norm(x, self.mean[layer], self.var[layer], weight=self.bn_w[layer], bias=self.bn_b[layer])
             x = fn.leaky_relu(x)
         x = fn.conv2d(x, self.k[-1], self.b[-1], 2, 0, 1)
-        return fn.sigmoid(x)
+        return torch.sigmoid(x)
 
     def parameters(self):
         return [p for p in chain(self.k, self.b, self.bn_w, self.bn_b)]
@@ -242,12 +242,12 @@ def GAN_step(batch_idx, batch):
 
     # generate fake data
     torch.compiler.cudagraph_mark_step_begin()
-    embed_loss, fake, perp, _ = model.outer_pass(x)
+    fake, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
     # discriminator pass on fake data
     label.fill_(fake_label)
     d_fake = discrim.choose(fake.clone().detach()).view(-1)
     d_loss_fake = fn.binary_cross_entropy(d_fake, label)
-    d_loss_fake.backward(retain_graph=True)
+    d_loss_fake.backward()
     d_loss = d_loss_fake + d_loss_real
 
     discrim_optim.step()
@@ -263,7 +263,7 @@ def GAN_step(batch_idx, batch):
     adv_loss = fn.binary_cross_entropy(d_gen, label)
     recon_loss = ssim_loss(fake, y)
 
-    loss = recon_loss + embed_loss + adv_loss
+    loss = recon_loss + embed_i + embed_o + adv_loss
     loss.backward()
     optim.step()
 
@@ -278,8 +278,8 @@ def GAN_step(batch_idx, batch):
             {
                 'train/recon_loss': recon_loss.item(),
                 'train/adversarial_loss': adv_loss.item(),
-                'train/perplexity': perp.item(),
-                #'train/perplexity_inner': perp_i.item(),
+                'train/perplexity': perp_o.item(),
+                'train/perplexity_inner': perp_i.item(),
                 'train/pred_psnr': psnr_x.item(),
                 'train/pred_ssim': ssim_x.item(),
                 'train/pred_ms-ssim': msssim_x.item(),
@@ -422,7 +422,10 @@ if __name__ == '__main__':
         wandb.log({'epoch': e})
         try:
             for batch_idx, batch in tqdm(enumerate(dataset), total=epoch_size, mininterval=0.5):
-                training_step(batch_idx, batch)
+                if batch_idx < 2500 and e == 0:
+                    warmup_vqvae(batch_idx, batch)
+                else:
+                    GAN_step(batch_idx, batch)
                 if batch_idx >= epoch_size:
                     save_model(_model)
                     break
