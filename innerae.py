@@ -1,7 +1,9 @@
 import argparse
+from dataclasses import dataclass
 import random
 from pathlib import Path
 
+from numpy import require
 import toml
 import gc
 import torch
@@ -16,6 +18,8 @@ from torchmetrics.image import (
     MultiScaleStructuralSimilarityIndexMeasure,
 )
 from tqdm import tqdm
+from itertools import zip_longest, chain
+from typing import List
 
 from data.pair_dali import PairDataset
 from losses.recon import MixReconstructionLoss
@@ -24,6 +28,7 @@ from vqvae.model import VQVAE
 from vqvae.blocks.encoder import Encoder
 from vqvae.blocks.decoder import Decoder
 from vqvae.blocks.quantizer import VectorQuantizer
+from vqvae.blocks.residual import ResidualStack
 from tspm.attention import AttnBlock
 from tspm.time import TimeEmbedding2D
 
@@ -62,6 +67,7 @@ class TSVAE(nn.Module):
         self.pre_quantization_conv = nn.Conv2d(h_dim, embedding_dim, kernel_size=1, stride=1)
         self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
         self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
+        self.in_dim = in_dim
 
     def forward(self, s_x, t_xy):
         """
@@ -86,7 +92,8 @@ class BigModel(nn.Module):
         super().__init__()
         self.outer = outer
         self.inner = inner
-        self.pass_thru = nn.Conv2d(128, 64, 3, 1, 1)
+        self.pass_thru = nn.Conv2d(inner.in_dim * 2, inner.in_dim, 3, 1, 1)
+        self.adapter = ResidualStack(inner.in_dim, inner.in_dim, 128, 8)
 
     def forward(self, x, t_xy):
         """
@@ -103,8 +110,16 @@ class BigModel(nn.Module):
         """
         s_x = self.outer.generate_latent(x)
         embed_loss_inner, s_y, perplexity_inner, _ = self.inner(s_x, t_xy)
+        s_x = self.adapter(s_x)
         s = self.pass_thru(torch.cat([s_x, s_y], dim=1))
         embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s)
+        return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
+
+    @torch.compile(mode='max-autotune', fullgraph=True)
+    def no_pass_thru(self, x, t_xy):
+        s_x = self.outer.generate_latent(x)
+        embed_loss_inner, s_y, perplexity_inner, _ = self.inner(s_x, t_xy)
+        embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s_y)
         return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
 
     @torch.compile(mode='max-autotune', fullgraph=True)
@@ -129,6 +144,36 @@ class BigModel(nn.Module):
         return self.inner(s_x, t_xy)
 
 
+real_label = 1
+fake_label = 0
+
+
+@dataclass(frozen=True)
+class Discriminator:
+    k: nn.ParameterList
+    b: nn.ParameterList
+    bn_w: nn.ParameterList
+    bn_b: nn.ParameterList
+    var: List[torch.Tensor]
+    mean: List[torch.Tensor]
+
+    @torch.compile(mode='max-autotune', fullgraph=True)
+    def choose(self, x):
+        for layer in range(len(self.k)):
+            x = fn.conv2d(x, self.k[layer], self.b[layer], 2, 0, 1)
+            x = fn.batch_norm(x, self.mean[layer], self.var[layer], weight=self.bn_w[layer], bias=self.bn_b[layer])
+            x = fn.leaky_relu(x)
+        return fn.sigmoid(x)
+
+    def parameters(self):
+        return [p for p in chain(self.k, self.b, self.bn_w, self.bn_b)]
+
+
+def to_params(tensors):
+    params = [nn.Parameter(t, requires_grad=True) for t in tensors]
+    return nn.ParameterList(params)
+
+
 # -------------- Functions
 
 
@@ -146,14 +191,7 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    if batch_idx % 9 == 0:
-        # t(B,2,10) -> t_yy(B, 1, 10) -> t_yy(B, 2, 10)
-        t_yy = t[:, 1].view(-1, 1, 10).expand(-1, 2, -1).detach()
-        x = y.clone().detach()
-        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t_yy)
-    else:
-        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t)
-
+    y_hat, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
     recon_loss = ssim_loss(y_hat, y)
     loss = recon_loss + embed_o + embed_i
 
@@ -182,6 +220,75 @@ def training_step(batch_idx, batch):
     if batch_idx % img_logging_rate == 0:
         caption = 'x, y_hat (predicted), y'
         mosaic = torch.cat([x[:4], y_hat[:4], y[:4]], dim=-1)
+        wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
+
+
+def GAN_step(batch_idx, batch):
+    x, y, t = unpack(batch, device)
+    B = x.shape[0]
+
+    discrim_optim.zero_grad()
+    # = =
+    # discriminator pass on real data
+    # = =
+    label = torch.full((B,), real_label, dtype=torch.float, device=device)
+    d_real = discrim.choose(x).view(-1)
+    d_loss_real = fn.binary_cross_entropy(d_real, label)
+    d_loss_real.backward()
+
+    # generate fake data
+    fake, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
+
+    # discriminator pass on fake data
+    label.fill_(fake_label)
+    d_fake = discrim.choose(fake.detach()).view(-1)
+    d_loss_fake = fn.binary_cross_entropy(d_fake, label)
+    d_loss_fake.backward()
+    d_loss = d_loss_fake + d_loss_real
+
+    discrim_optim.step()
+
+    # = =
+    # update auto encoder w adversarial loss
+    # = =
+    optim.zero_grad()
+
+    d_gen = discrim.choose(fake).view(-1)
+
+    # labels are switched because we want the model to go towards real
+    label.fill_(real_label)
+
+    adv_loss = fn.binary_cross_entropy(d_gen, label)
+    recon_loss = fn.l1_loss(fake, y)
+
+    loss = recon_loss + embed_o + embed_i + adv_loss
+    loss.backward()
+    optim.step()
+
+    if batch_idx % logging_rate == 0:
+        psnr_x = psnr(fake, y)
+        ssim_x = ssim(fake, y)
+        msssim_x = ms_ssim(fake, y)
+
+        wandb.log(
+            {
+                'train/recon_loss': recon_loss.item(),
+                'train/adversarial_loss': adv_loss.item(),
+                'train/perplexity': perp_o.item(),
+                'train/perplexity_inner': perp_i.item(),
+                'train/pred_psnr': psnr_x.item(),
+                'train/pred_ssim': ssim_x.item(),
+                'train/pred_ms-ssim': msssim_x.item(),
+                'discrim/d_real': d_real.mean().item(),
+                'discrim/d_fake': d_fake.mean().item(),
+                'discrim/real_loss': d_loss_real.item(),
+                'discrim/fake_loss': d_loss_fake.item(),
+            }
+        )
+
+    if batch_idx % img_logging_rate == 0:
+        caption = 'x, y_hat (predicted), y'
+        mosaic = torch.cat([x[:4], fake[:4], y[:4]], dim=-1)
         wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
@@ -268,8 +375,28 @@ if __name__ == '__main__':
     _model.to(memory_format=torch.channels_last)
     model = torch.compile(_model, **config['compile'])
 
+    # discriminator
+    in_channels = [3, 32, 48, 64, 128, 256, 512, 1024]
+    out_channels = [32, 48, 64, 128, 256, 512, 1024, 1]
+
+    ks = [torch.randn(o, i, 2, 2, device=device) for o, i in zip_longest(out_channels, in_channels)]
+    bs = [torch.randn(o, device=device) for o in out_channels]
+    bn_ws = [torch.ones(o, device=device) for o in out_channels]
+    bn_bs = [torch.zeros(o, device=device) for o in out_channels]
+    bn_rm = [torch.zeros(o, device=device) for o in out_channels]
+    bn_rv = [torch.zeros(o, device=device) for o in out_channels]
+    discrim = Discriminator(
+        k=to_params(ks),
+        b=to_params(bs),
+        bn_w=to_params(bn_ws),
+        bn_b=to_params(bn_bs),
+        var=bn_rv,
+        mean=bn_rm,
+    )
+
     # optim
     optim = schedulefree.AdamWScheduleFree(_model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
+    discrim_optim = schedulefree.AdamWScheduleFree(discrim.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
 
     # loss
     ssim_loss = MixReconstructionLoss()
