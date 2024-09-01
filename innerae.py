@@ -54,13 +54,14 @@ class TSVAE(nn.Module):
     the intermediate representation is in z space
     """
 
-    def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads, n_embeddings, beta) -> None:
+    def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads, n_embeddings, embedding_dim, beta) -> None:
         super().__init__()
         self.encoder = Encoder(in_dim, h_dim, n_res_layers, res_h_dim, stacks)
         self.time_embedding = TimeEmbedding2D(10, e_dim)
         self.attention = nn.ModuleList([AttnBlock(e_dim) for _ in range(heads)])
-        self.vector_quantization = VectorQuantizer(n_embeddings, h_dim, beta)
-        self.decoder = Decoder(h_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
+        self.pre_quantization_conv = nn.Conv2d(h_dim, embedding_dim, kernel_size=1, stride=1)
+        self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
+        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
 
     def forward(self, s_x, t_xy):
         """
@@ -75,6 +76,7 @@ class TSVAE(nn.Module):
         t_xy = self.time_embedding(t_xy.flatten(1))
         for attn in self.attention:
             z = attn(z, t_xy)
+        z = self.pre_quantization_conv(z)
         embed_loss, z_q, perp, _, _ = self.vector_quantization(z)
         return embed_loss, self.decoder(z_q), perp, z
 
@@ -84,6 +86,7 @@ class BigModel(nn.Module):
         super().__init__()
         self.outer = outer
         self.inner = inner
+        self.pass_thru = nn.Conv2d(128, 64, 3, 1, 1)
 
     def forward(self, x, t_xy):
         """
@@ -100,7 +103,8 @@ class BigModel(nn.Module):
         """
         s_x = self.outer.generate_latent(x)
         embed_loss_inner, s_y, perplexity_inner, _ = self.inner(s_x, t_xy)
-        embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s_y)
+        s = self.pass_thru(torch.cat([s_x, s_y], dim=1))
+        embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s)
         return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
 
     @torch.compile(mode='max-autotune', fullgraph=True)
@@ -142,15 +146,17 @@ def save_model(model):
 def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
-    embed_loss_x, x_hat, perp_x, s_x = model.outer_pass(x)
-    embed_loss_y, y_hat, perp_y, s_y = model.outer_pass(y)
-    recon_loss_x, recon_loss_y = ssim_loss(x_hat, x), ssim_loss(y_hat, y)
-    outer_loss = recon_loss_x + recon_loss_y + embed_loss_x + embed_loss_y
+    if batch_idx % 9 == 0:
+        # t(B,2,10) -> t_yy(B, 1, 10) -> t_yy(B, 2, 10)
+        t_yy = t[:, 1].view(-1, 1, 10).expand(-1, 2, -1).detach()
+        x = y.clone().detach()
+        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t_yy)
+    else:
+        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t)
 
-    embed_loss_inner, s_y_hat, perplexity_inner, _ = model.inner_pass(s_x, t)
-    inner_loss = torch.pow(s_y - s_y_hat, 2.0).mean() + embed_loss_inner
+    recon_loss = ssim_loss(y_hat, y)
+    loss = recon_loss + embed_o + embed_i
 
-    loss = inner_loss + outer_loss
     optim.zero_grad()
     loss.backward()
     optim.step()
@@ -159,38 +165,23 @@ def training_step(batch_idx, batch):
         psnr_x = psnr(y_hat, y)
         ssim_x = ssim(y_hat, y)
         msssim_x = ms_ssim(y_hat, y)
-        mean_perp = (perp_x.item() + perp_y.item()) / 2
-        mean_recon = (recon_loss_x.item() + recon_loss_y.item()) / 2
-        mean_embed = (embed_loss_x.item() + embed_loss_y.item()) / 2
-
-        with torch.no_grad():
-            _, recon, _, _ = model.outer.generate_output_from_latent(s_y_hat)
-        psnr_i = psnr(recon, y)
-        ssim_i = ssim(recon, y)
-        msssim_i = ms_ssim(recon, y)
 
         wandb.log(
             {
-                'train/outer_loss': outer_loss.item(),
-                'train/inner_loss': inner_loss.item(),
-                'train/recon_loss': mean_recon,
-                'train/perplexity': mean_perp,
-                'train/perplexity_inner': perplexity_inner.item(),
-                'train/embed_loss': mean_embed,
-                'train/psnr': psnr_x.item(),
-                'train/ssim': ssim_x.item(),
-                'train/ms-ssim': msssim_x.item(),
-                'train/psnr_pred': psnr_i.item(),
-                'train/ssim_pred': ssim_i.item(),
-                'train/msssim_pred': msssim_i.item(),
+                'train/recon_loss': recon_loss.item(),
+                'train/perplexity': perp_o.item(),
+                'train/perplexity_inner': perp_i.item(),
+                'train/embed_loss_out': embed_o.item(),
+                'train/embed_loss_in': embed_i.item(),
+                'train/pred_psnr': psnr_x.item(),
+                'train/pred_ssim': ssim_x.item(),
+                'train/pred_ms-ssim': msssim_x.item(),
             }
         )
 
     if batch_idx % img_logging_rate == 0:
-        with torch.no_grad():
-            _, recon, _, _ = model.outer.generate_output_from_latent(s_y_hat)
-        caption = 'x, x_hat, y_hat (predicted), y_hat (no inner), y'
-        mosaic = torch.cat([x[:4], x_hat[:4], recon[:4], y_hat[:4], y[:4]], dim=-1)
+        caption = 'x, y_hat (predicted), y'
+        mosaic = torch.cat([x[:4], y_hat[:4], y[:4]], dim=-1)
         wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
@@ -272,12 +263,13 @@ if __name__ == '__main__':
     # Model(s)
     _outer_model = VQVAE(**config['outer'])
     _inner_model = TSVAE(**config['inner'])
-    model = BigModel(_outer_model, _inner_model)
-    summary(model, device=device, depth=4, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
-    model.to(memory_format=torch.channels_last)
+    _model = BigModel(_outer_model, _inner_model)
+    summary(_model, device=device, depth=4, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
+    _model.to(memory_format=torch.channels_last)
+    model = torch.compile(_model, **config['compile'])
 
     # optim
-    optim = schedulefree.AdamWScheduleFree(model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
+    optim = schedulefree.AdamWScheduleFree(_model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
 
     # loss
     ssim_loss = MixReconstructionLoss()
@@ -292,23 +284,20 @@ if __name__ == '__main__':
     # val_dataset = FrameDataset(**config['val_data'])
     # wandb
     wandb.init(project='timescale-diffusion', name=args.name)
-    save_model(model)
+    save_model(_model)
 
     e = 0
     while e < num_epochs:
         wandb.log({'epoch': e})
         try:
-            for batch_idx, batch in tqdm(enumerate(dataset)):
-                if batch_idx < 10_000 and e == 0:
-                    warmup_vqvae(batch_idx, batch)
-                else:
-                    training_step(batch_idx, batch)
+            for batch_idx, batch in tqdm(enumerate(dataset), total=epoch_size, mininterval=0.5):
+                training_step(batch_idx, batch)
                 if batch_idx >= epoch_size:
-                    save_model(model)
+                    save_model(_model)
                     break
         except Exception as ex:  # noqa: E722
             print(ex)
-            save_model(model)
+            save_model(_model)
             del dataset
             gc.collect()
             dataset = PairDataset(**config['data'])
