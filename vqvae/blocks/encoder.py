@@ -37,47 +37,43 @@ def build_conv_stack(stacks, in_dim, h_dim, kernel, stride, res_h_dim, n_res_lay
     conv_stack = []
     conv_stack += [
         nn.Conv2d(in_dim, h_dim // 2, kernel_size=kernel, stride=stride, padding=1),
-        nn.ReLU(True),
+        nn.BatchNorm2d(h_dim // 2),
+        nn.LeakyReLU(True),
     ]
     if stacks >= 2:
         conv_stack += [
             nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel, stride=stride, padding=1),
-            nn.ReLU(True),
-            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
-            ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
-        ]
-    else:
-        conv_stack += [
-            nn.Conv2d(
-                h_dim // 2,
-                h_dim,
-                kernel_size=kernel - 1,
-                stride=stride - 1,
-                padding=1,
-            ),
-            nn.ReLU(True),
-            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
-            ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
-        ]
-        return conv_stack
-    if stacks >= 3:
-        conv_stack += [
-            nn.Conv2d(h_dim, h_dim // 2, kernel_size=kernel, stride=stride, padding=1),
-            nn.ReLU(True),
-        ]
-    else:
-        return conv_stack
-    if stacks >= 4:
-        conv_stack += [
-            nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel, stride=stride, padding=1),
-            nn.ReLU(True),
+            nn.BatchNorm2d(h_dim),
+            nn.LeakyReLU(True),
             nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         ]
     else:
         conv_stack += [
             nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
-            nn.ReLU(True),
+            nn.BatchNorm2d(h_dim),
+            nn.LeakyReLU(True),
+            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
+            ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
+        ]
+        return conv_stack
+    if stacks >= 3:
+        conv_stack += [nn.Conv2d(h_dim, h_dim // 2, kernel_size=kernel, stride=stride, padding=1), nn.BatchNorm2d(h_dim // 2), nn.LeakyReLU(True)]
+    else:
+        return conv_stack
+    if stacks >= 4:
+        conv_stack += [
+            nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel, stride=stride, padding=1),
+            nn.BatchNorm2d(h_dim),
+            nn.LeakyReLU(True),
+            nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
+            ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
+        ]
+    else:
+        conv_stack += [
+            nn.Conv2d(h_dim // 2, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
+            nn.BatchNorm2d(h_dim),
+            nn.LeakyReLU(True),
             nn.Conv2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         ]
