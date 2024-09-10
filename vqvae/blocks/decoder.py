@@ -36,54 +36,36 @@ def build_inv_conv_stack(stacks, in_dim, out_dim, h_dim, kernel, stride, res_h_d
         nn.ConvTranspose2d(in_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
         ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
         nn.ConvTranspose2d(h_dim, h_dim // 2, kernel_size=kernel, stride=stride, padding=1),
-        nn.ReLU(True),
+        nn.LeakyReLU(True),
     ]
     if stacks >= 2:
         conv_stack += [
-            nn.ConvTranspose2d(
-                h_dim // 2,
-                h_dim,
-                kernel_size=kernel,
-                stride=stride,
-                padding=1,
-            ),
-            nn.ReLU(),
-        ]
-    else:
-        conv_stack += [
-            nn.ConvTranspose2d(
-                h_dim // 2,
-                out_dim,
-                kernel_size=kernel - 1,
-                stride=stride - 1,
-                padding=1,
-            ),
-            nn.Sigmoid(),
-        ]
-        return conv_stack
-    if stacks >= 3:
-        conv_stack += [
-            nn.ConvTranspose2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
-            ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
-            nn.ConvTranspose2d(h_dim, h_dim // 2, kernel_size=kernel, stride=stride, padding=1),
-            nn.ReLU(),
-        ]
-    else:
-        conv_stack += [
-            nn.ConvTranspose2d(h_dim, out_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
-            nn.Sigmoid(),
-        ]
-        return conv_stack
-    if stacks >= 4:
-        conv_stack += [
-            nn.ConvTranspose2d(h_dim // 2, out_dim, kernel_size=kernel, stride=stride, padding=1),
-            nn.Sigmoid(),
+            nn.ConvTranspose2d(h_dim // 2, h_dim, kernel_size=kernel, stride=stride, padding=1),
+            nn.BatchNorm2d(h_dim),
+            nn.LeakyReLU(),
         ]
     else:
         conv_stack += [
             nn.ConvTranspose2d(h_dim // 2, out_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
             nn.Sigmoid(),
         ]
+        return conv_stack
+    if stacks >= 3:
+        conv_stack += [
+            nn.ConvTranspose2d(h_dim, h_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1),
+            nn.BatchNorm2d(h_dim),
+            ResidualStack(h_dim, h_dim, res_h_dim, n_res_layers),
+            nn.ConvTranspose2d(h_dim, h_dim // 2, kernel_size=kernel, stride=stride, padding=1),
+            nn.BatchNorm2d(h_dim // 2),
+            nn.LeakyReLU(),
+        ]
+    else:
+        conv_stack += [nn.ConvTranspose2d(h_dim, out_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1), nn.Sigmoid()]
+        return conv_stack
+    if stacks >= 4:
+        conv_stack += [nn.ConvTranspose2d(h_dim // 2, out_dim, kernel_size=kernel, stride=stride, padding=1), nn.Sigmoid()]
+    else:
+        conv_stack += [nn.ConvTranspose2d(h_dim // 2, out_dim, kernel_size=kernel - 1, stride=stride - 1, padding=1), nn.Sigmoid()]
     return conv_stack
 
 
