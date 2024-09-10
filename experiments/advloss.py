@@ -18,7 +18,7 @@ from torchmetrics.image import (
     MultiScaleStructuralSimilarityIndexMeasure,
 )
 from tqdm import tqdm
-from itertools import zip_longest, chain, islice
+from itertools import zip_longest, chain
 from typing import List
 
 from data.pair_dali import PairDataset
@@ -84,7 +84,7 @@ class TSVAE(nn.Module):
             z = attn(z, t_xy)
         z = self.pre_quantization_conv(z)
         embed_loss, z_q, perp, _, _ = self.vector_quantization(z)
-        return embed_loss, self.decoder(z_q), perp, z_q
+        return embed_loss, self.decoder(z_q), perp, z
 
 
 class BigModel(nn.Module):
@@ -94,8 +94,6 @@ class BigModel(nn.Module):
         self.inner = inner
         self.pass_thru = nn.Conv2d(inner.in_dim * 2, inner.in_dim, 3, 1, 1)
         self.adapter = ResidualStack(inner.in_dim, inner.in_dim, 128, 8)
-        for p in self.adapter.parameters():
-            torch.nn.init.zeros_(p)
 
     def forward(self, x, t_xy):
         """
@@ -124,6 +122,7 @@ class BigModel(nn.Module):
         embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s_y)
         return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
 
+    @torch.compile(mode='max-autotune', fullgraph=True)
     def outer_pass(self, x):
         """
         return:
@@ -134,6 +133,7 @@ class BigModel(nn.Module):
         """
         return self.outer(x)
 
+    @torch.compile(mode='max-autotune', fullgraph=True)
     def inner_pass(self, s_x, t_xy):
         """
         return:
@@ -146,6 +146,28 @@ class BigModel(nn.Module):
 
 real_label = 1
 fake_label = 0
+
+
+@dataclass(frozen=True)
+class Discriminator:
+    k: nn.ParameterList
+    b: nn.ParameterList
+    bn_w: nn.ParameterList
+    bn_b: nn.ParameterList
+    var: List[torch.Tensor]
+    mean: List[torch.Tensor]
+
+    @torch.compile(mode='max-autotune', fullgraph=True)
+    def choose(self, x):
+        for layer in range(len(self.k) - 1):
+            x = fn.conv2d(x, self.k[layer], self.b[layer], 2, 0, 1)
+            x = fn.batch_norm(x, self.mean[layer], self.var[layer], weight=self.bn_w[layer], bias=self.bn_b[layer])
+            x = fn.leaky_relu(x)
+        x = fn.conv2d(x, self.k[-1], self.b[-1], 2, 0, 1)
+        return torch.sigmoid(x)
+
+    def parameters(self):
+        return [p for p in chain(self.k, self.b, self.bn_w, self.bn_b)]
 
 
 def to_params(tensors, init='none'):
@@ -171,14 +193,9 @@ def save_model(model):
 
 
 def training_step(batch_idx, batch):
-    global full_train_flag
     x, y, t = unpack(batch, device)
 
-    if full_train_flag:
-        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t)
-    else:
-        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
-
+    y_hat, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
     recon_loss = ssim_loss(y_hat, y)
     loss = recon_loss + embed_o + embed_i
 
@@ -210,23 +227,73 @@ def training_step(batch_idx, batch):
         wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
-def validation_step(batch_idx, batch):
-    global full_train_flag
+def GAN_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
-    with torch.no_grad():
-        if full_train_flag:
-            y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t)
-        else:
-            y_hat, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
+    B = x.shape[0]
 
-        recon_loss = ssim_loss(y_hat, y)
-        loss = recon_loss + embed_o + embed_i
+    # = =
+    # discriminator pass on real data
+    # = =
+    discrim_optim.zero_grad()
+    label = torch.full((B,), real_label, dtype=torch.float, device=device)
+    d_real = discrim.choose(x).view(-1)
+    d_loss_real = fn.binary_cross_entropy(d_real, label)
+    d_loss_real.backward()
 
-        psnr_x = psnr(y_hat, y)
-        ssim_x = ssim(y_hat, y)
-        msssim_x = ms_ssim(y_hat, y)
+    # generate fake data
+    torch.compiler.cudagraph_mark_step_begin()
+    fake, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
+    # discriminator pass on fake data
+    label.fill_(fake_label)
+    d_fake = discrim.choose(fake.clone().detach()).view(-1)
+    d_loss_fake = fn.binary_cross_entropy(d_fake, label)
+    d_loss_fake.backward()
+    d_loss = d_loss_fake + d_loss_real
 
-    return recon_loss, perp_o, perp_i, psnr_x, ssim_x, msssim_x
+    discrim_optim.step()
+
+    # = =
+    # update auto encoder w adversarial loss
+    # = =
+    optim.zero_grad()
+
+    # labels are switched because we want the model to go towards real
+    label.fill_(real_label)
+    d_gen = discrim.choose(fake).view(-1)
+    adv_loss = fn.binary_cross_entropy(d_gen, label)
+    recon_loss = fn.l1_loss(fake, y)
+
+    loss = recon_loss + embed_i + embed_o + adv_loss
+    loss.backward()
+    optim.step()
+
+    if batch_idx % logging_rate == 0:
+        psnr_x = psnr(fake, y)
+        ssim_x = ssim(fake, y)
+        msssim_x = ms_ssim(fake, y)
+
+        print(f'd_x{d_real.mean().item()} d_g_x {d_fake.mean().item()}')
+
+        wandb.log(
+            {
+                'train/recon_loss': recon_loss.item(),
+                'train/adversarial_loss': adv_loss.item(),
+                'train/perplexity': perp_o.item(),
+                'train/perplexity_inner': perp_i.item(),
+                'train/pred_psnr': psnr_x.item(),
+                'train/pred_ssim': ssim_x.item(),
+                'train/pred_ms-ssim': msssim_x.item(),
+                'discrim/d_real': d_real.mean().item(),
+                'discrim/d_fake': d_fake.mean().item(),
+                'discrim/real_loss': d_loss_real.item(),
+                'discrim/fake_loss': d_loss_fake.item(),
+            }
+        )
+
+    if batch_idx % img_logging_rate == 0:
+        caption = 'x, y_hat (predicted), y'
+        mosaic = torch.cat([x[:4], fake[:4], y[:4]], dim=-1)
+        wandb.log({'train/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
 def warmup_vqvae(batch_idx, batch):
@@ -303,8 +370,6 @@ if __name__ == '__main__':
     epoch_size = config['hp']['epoch_size'] if 'epoch_size' in config['hp'] else 100000
     logging_rate = config['hp']['logging_rate'] if 'logging_rate' in config['hp'] else 50
     img_logging_rate = config['hp']['img_logging_rate'] if 'img_logging_rate' in config['hp'] else logging_rate**2
-    val_interval = config['hp']['val_interval'] if 'val_interval' in config['hp'] else 1000
-    full_train_flag = False
 
     # Model(s)
     _outer_model = VQVAE(**config['outer'])
@@ -314,8 +379,28 @@ if __name__ == '__main__':
     _model.to(memory_format=torch.channels_last)
     model = torch.compile(_model, **config['compile'])
 
+    # discriminator
+    in_channels = [3, 32, 48, 64, 128, 256, 512, 1024]
+    out_channels = [32, 48, 64, 128, 256, 512, 1024, 1]
+
+    ks = [torch.randn(o, i, 2, 2, device=device) for o, i in zip_longest(out_channels, in_channels)]
+    bs = [torch.randn(o, device=device) for o in out_channels]
+    bn_ws = [torch.randn(o, device=device) for o in out_channels]
+    bn_bs = [torch.zeros(o, device=device) for o in out_channels]
+    bn_rm = [torch.zeros(o, device=device) for o in out_channels]
+    bn_rv = [torch.zeros(o, device=device) for o in out_channels]
+    discrim = Discriminator(
+        k=to_params(ks, init='normal'),
+        b=to_params(bs, init='normal'),
+        bn_w=to_params(bn_ws, init='normal'),
+        bn_b=to_params(bn_bs, init='normal'),
+        var=bn_rv,
+        mean=bn_rm,
+    )
+
     # optim
     optim = schedulefree.AdamWScheduleFree(_model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
+    discrim_optim = schedulefree.AdamWScheduleFree(discrim.parameters(), lr=learning_rate)
 
     # loss
     ssim_loss = MixReconstructionLoss()
@@ -327,58 +412,20 @@ if __name__ == '__main__':
 
     # dataset
     dataset = PairDataset(**config['data'])
-    val_dataset = PairDataset(**config['val_data'])
+    # val_dataset = FrameDataset(**config['val_data'])
     # wandb
     wandb.init(project='timescale-diffusion', name=args.name)
     save_model(_model)
 
-    VAL_BATCHES = 50
     e = 0
-    total_idx = 0
     while e < num_epochs:
         wandb.log({'epoch': e})
         try:
             for batch_idx, batch in tqdm(enumerate(dataset), total=epoch_size, mininterval=0.5):
-                training_step(batch_idx, batch)
-                if total_idx >= 250_000:
-                    full_train_flag = True
-                total_idx += 1
+                GAN_step(batch_idx, batch)
                 if batch_idx >= epoch_size:
                     save_model(_model)
                     break
-                if batch_idx % val_interval == 0:
-                    recon_loss = 0.0
-                    perplexity = 0.0
-                    perplexity_inner = 0.0
-                    avg_psnr = 0.0
-                    avg_ssim = 0.0
-                    avg_ms_ssim = 0.0
-
-                    optim.eval()
-                    model.eval()
-
-                    for val_batch in islice(val_dataset, VAL_BATCHES):
-                        loss, perp_o, perp_i, psnr_val, ssim_val, ms_ssim_val = validation_step(batch_idx, batch)
-                        recon_loss += loss.item()
-                        perplexity += perp_o.item()
-                        perplexity_inner += perp_i.item()
-                        avg_psnr += psnr_val.item()
-                        avg_ssim += ssim_val.item()
-                        avg_ms_ssim += ms_ssim_val.item()
-
-                    wandb.log(
-                        {
-                            'val/recon_loss': recon_loss / VAL_BATCHES,
-                            'val/perplexity': perplexity / VAL_BATCHES,
-                            'val/perplexity_inner': perplexity_inner / VAL_BATCHES,
-                            'val/pred_psnr': avg_psnr / VAL_BATCHES,
-                            'val/pred_ssim': avg_ssim / VAL_BATCHES,
-                            'val/pred_ms-ssim': avg_ms_ssim / VAL_BATCHES,
-                        }
-                    )
-                    optim.train()
-                    model.train()
-
         except Exception as ex:  # noqa: E722
             print(ex)
             save_model(_model)

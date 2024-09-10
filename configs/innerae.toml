@@ -23,7 +23,7 @@ n_res_layers = 4
 n_embeddings = 1024
 stacks = 2
 embedding_dim = 64
-beta = 0.5
+beta = 0.25
 
 [inner]
 in_dim = 64
@@ -52,10 +52,11 @@ prefetch = 4
 shuffle = true
 
 [val_data]
-to_diff = false
-data_dir = "/cluster/research-groups/wehrwein/webcam/geiranger/validation_frames_random/"
-input_size = [256, 256]
-fps = 30
-offset_seconds = 17251202
-batch_size = 6
-num_workers = 0
+flist = "/cluster/research-groups/wehrwein/webcam/rane/fullpairs/val/filelist.txt"
+dir = "/cluster/research-groups/wehrwein/webcam/rane/fullpairs/val/"
+periodic = true
+batch_size = 32
+num_threads = 2
+fill = 5000
+prefetch = 4
+shuffle = true

@@ -26,7 +26,6 @@ class AttnBlock(nn.Module):
         self.mlp_down = torch.nn.Parameter(_xav(torch.randn(1, e_dim * 2, e_dim)), requires_grad=True)
 
         self.e_dim = e_dim
-        self.norm = nn.LayerNorm(e_dim)
 
     def forward(self, x: Tensor, t: Tensor):
         """
@@ -37,12 +36,12 @@ class AttnBlock(nn.Module):
         B, S, shape = x.shape[0], x.shape[1], x.shape
         x = x.reshape(B, -1, self.e_dim)
         t = t.unsqueeze(1).expand(-1, S, -1)
-        q = self.norm(x @ self.q_proj)
+        q = x @ self.q_proj
         # do both k and v at the same time in one mm to speed up
         # in self attn you can actually do all 3 at once
         kv = t @ self.kv_proj
         k, v = torch.split(kv, self.e_dim, dim=-1)
-        k, v = self.norm(k), self.norm(v)
+        k, v = k, v
         # take the attention map (phi) and add it to (x)
         r = f.scaled_dot_product_attention(q, k, v) @ self.attn_proj
         r = f.gelu((r @ self.mlp_up) + self.mlp_bias)
