@@ -21,6 +21,7 @@ from torchmetrics.image import (
 from tqdm import tqdm
 from itertools import zip_longest, chain, islice
 from typing import List
+from fvcore.nn.precise_bn import update_bn_stats
 
 from data.pair_dali import PairDataset
 from losses.recon import MixReconstructionLoss
@@ -66,21 +67,27 @@ class TSVAE(nn.Module):
         in_dims = [h_dim, int(h_dim * 1.5), h_dim * 2]
         out_dims = [int(h_dim * 1.5), h_dim * 2, h_dim * 4]
         down_conv = []
-        for in_dim, out_dim in zip_longest(in_dims, out_dims):
-            down_conv.append(nn.Conv2d(in_dim, out_dim, 4, 2, 1))
+        for _in_dim, out_dim in zip_longest(in_dims, out_dims):
+            down_conv.append(nn.Conv2d(_in_dim, out_dim, 4, 2, 1))
             down_conv.append(nn.BatchNorm2d(out_dim))
             down_conv.append(nn.LeakyReLU(True))
+
         self.down_conv_stack = nn.Sequential(*down_conv)
         code_dim = 2048
         self.time_embedding = TimeEmbedding2D(10, e_dim)
-        self.mlp_up = torch.nn.Parameter(_xav(torch.randn(1, e_dim, code_dim * 2)), requires_grad=True)
+        self.mlp_up = torch.nn.Parameter(_xav(torch.randn(1, e_dim + code_dim, code_dim * 2)), requires_grad=True)
         self.mlp_bias = torch.nn.Parameter(_xav(torch.randn(1, code_dim * 2)), requires_grad=True)
         self.mlp_down = torch.nn.Parameter(_xav(torch.randn(1, code_dim * 2, code_dim)), requires_grad=True)
         up_conv = []
-        for out_dim, in_dim in zip_longest(reversed(in_dims), reversed(out_dims)):
-            up_conv.append(nn.Conv2d(in_dim, out_dim, 4, 2, 1))
-            up_conv.append(nn.BatchNorm2d(out_dim))
-            up_conv.append(nn.LeakyReLU(True))
+        up_conv.append(nn.ConvTranspose2d(h_dim * 4, h_dim * 2, kernel_size=4, stride=2, padding=1))
+        up_conv.append(nn.BatchNorm2d(h_dim * 2))
+        up_conv.append(nn.LeakyReLU(True))
+        up_conv.append(nn.ConvTranspose2d(h_dim * 2, int(h_dim * 1.5), 4, 2, 1))
+        up_conv.append(nn.BatchNorm2d(int(h_dim * 1.5)))
+        up_conv.append(nn.LeakyReLU(True))
+        up_conv.append(nn.ConvTranspose2d(int(h_dim * 1.5), h_dim, 4, 2, 1))
+        up_conv.append(nn.BatchNorm2d(h_dim))
+        up_conv.append(nn.LeakyReLU(True))
         self.up_conv_stack = nn.Sequential(*up_conv)
         self.pre_quantization_conv = nn.Conv2d(h_dim, embedding_dim, kernel_size=1, stride=1)
         self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
@@ -100,10 +107,12 @@ class TSVAE(nn.Module):
         z_shape = z.shape
         lc = z.flatten(1)
         t_xy = self.time_embedding(t_xy.flatten(1))
-        affine = fn.leaky_relu_((t_xy @ self.mlp_up) + self.mlp_bias)
+        tlc = torch.cat([t_xy, lc], dim=-1)
+        affine = fn.leaky_relu_((tlc @ self.mlp_up) + self.mlp_bias)
         lc = lc + (affine @ self.mlp_down)
         z = lc.reshape(*z_shape)
         z = self.up_conv_stack(z)
+        z = self.pre_quantization_conv(z)
         embed_loss, z_q, perp, _, _ = self.vector_quantization(z)
         return embed_loss, self.decoder(z_q), perp, lc
 
@@ -349,16 +358,19 @@ if __name__ == '__main__':
     # dataset
     dataset = PairDataset(**config['data'])
     val_dataset = PairDataset(**config['val_data'])
+    VAL_BATCHES = 50
     # wandb
     wandb.init(project='timescale-diffusion', name=args.name)
     save_model(_model)
 
-    VAL_BATCHES = 50
     e = 0
     total_idx = 0
     while e < num_epochs:
         wandb.log({'epoch': e})
         try:
+            for batch_idx, batch in tqdm(islice(enumerate(dataset), 50000), total=50000, desc='warmup'):
+                warmup_vqvae(batch_idx, batch)
+
             for batch_idx, batch in tqdm(enumerate(dataset), total=epoch_size, mininterval=0.5):
                 training_step(batch_idx, batch)
                 if total_idx >= 250_000:
@@ -367,7 +379,7 @@ if __name__ == '__main__':
                 if batch_idx >= epoch_size:
                     save_model(_model)
                     break
-                if batch_idx % val_interval == 0:
+                if total_idx % val_interval == 0:
                     recon_loss = 0.0
                     perplexity = 0.0
                     perplexity_inner = 0.0
@@ -378,7 +390,7 @@ if __name__ == '__main__':
                     optim.eval()
                     model.eval()
 
-                    for val_batch in islice(val_dataset, VAL_BATCHES):
+                    for val_batch in tqdm(islice(val_dataset, VAL_BATCHES), total=VAL_BATCHES, desc='validation'):
                         loss, perp_o, perp_i, psnr_val, ssim_val, ms_ssim_val = validation_step(batch_idx, batch)
                         recon_loss += loss.item()
                         perplexity += perp_o.item()
