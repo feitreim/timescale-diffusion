@@ -64,31 +64,13 @@ class TSVAE(nn.Module):
     def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads, n_embeddings, embedding_dim, beta) -> None:
         super().__init__()
         self.encoder = Encoder(in_dim, h_dim, n_res_layers, res_h_dim, stacks)
-        in_dims = [h_dim, int(h_dim * 1.5), h_dim * 2]
-        out_dims = [int(h_dim * 1.5), h_dim * 2, h_dim * 4]
-        down_conv = []
-        for _in_dim, out_dim in zip_longest(in_dims, out_dims):
-            down_conv.append(nn.Conv2d(_in_dim, out_dim, 4, 2, 1))
-            down_conv.append(nn.BatchNorm2d(out_dim))
-            down_conv.append(nn.LeakyReLU(True))
-
-        self.down_conv_stack = nn.Sequential(*down_conv)
-        code_dim = 2048
-        self.time_embedding = TimeEmbedding2D(10, e_dim)
-        self.mlp_up = torch.nn.Parameter(_xav(torch.randn(1, e_dim + code_dim, code_dim * 2)), requires_grad=True)
-        self.mlp_bias = torch.nn.Parameter(_xav(torch.randn(1, code_dim * 2)), requires_grad=True)
-        self.mlp_down = torch.nn.Parameter(_xav(torch.randn(1, code_dim * 2, code_dim)), requires_grad=True)
-        up_conv = []
-        up_conv.append(nn.ConvTranspose2d(h_dim * 4, h_dim * 2, kernel_size=4, stride=2, padding=1))
-        up_conv.append(nn.BatchNorm2d(h_dim * 2))
-        up_conv.append(nn.LeakyReLU(True))
-        up_conv.append(nn.ConvTranspose2d(h_dim * 2, int(h_dim * 1.5), 4, 2, 1))
-        up_conv.append(nn.BatchNorm2d(int(h_dim * 1.5)))
-        up_conv.append(nn.LeakyReLU(True))
-        up_conv.append(nn.ConvTranspose2d(int(h_dim * 1.5), h_dim, 4, 2, 1))
-        up_conv.append(nn.BatchNorm2d(h_dim))
-        up_conv.append(nn.LeakyReLU(True))
-        self.up_conv_stack = nn.Sequential(*up_conv)
+        self.time_embedding = torch.nn.Parameter(_xav(torch.randn(1, 20, e_dim)), requires_grad=True)
+        feat_size = int((64 / (2**stacks)) ** 2)
+        self.down_proj = nn.Parameter(_xav(torch.randn(1, feat_size, e_dim)), requires_grad=True)
+        self.mlp_up = nn.Parameter(_xav(torch.randn(1, e_dim, e_dim * 2)), requires_grad=True)
+        self.mlp_bias = nn.Parameter(_xav(torch.randn(1, h_dim, e_dim * 2)), requires_grad=True)
+        self.mlp_down = nn.Parameter(_xav(torch.randn(1, e_dim * 2, e_dim)), requires_grad=True)
+        self.up_proj = nn.Parameter(_xav(torch.randn(1, e_dim, feat_size)), requires_grad=True)
         self.pre_quantization_conv = nn.Conv2d(h_dim, embedding_dim, kernel_size=1, stride=1)
         self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
         self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
@@ -103,15 +85,18 @@ class TSVAE(nn.Module):
         Returns:
             tuple: (s_y, z_x, z_y)
         """
-        z = self.down_conv_stack(self.encoder(s_x))
-        z_shape = z.shape
-        lc = z.flatten(1)
-        t_xy = self.time_embedding(t_xy.flatten(1))
-        tlc = torch.cat([t_xy, lc], dim=-1)
-        affine = fn.leaky_relu_((tlc @ self.mlp_up) + self.mlp_bias)
-        lc = lc + (affine @ self.mlp_down)
-        z = lc.reshape(*z_shape)
-        z = self.up_conv_stack(z)
+        z = self.encoder(s_x)
+        B, C, H, W = z.shape
+        # lc[BCE]: z[BC(HW)] @ DP[1(HW)E]
+        lc = z.view(B, C, H * W) @ self.down_proj
+        t_xy = t_xy.view(B, 1, 20).expand(-1, C, -1)
+        t_xy = t_xy @ self.time_embedding
+        # lc[BCE] & t_xy[BCE] --> q=lc, kv=t_xy
+        r = fn.scaled_dot_product_attention(lc, t_xy, t_xy)
+        r = fn.relu_((r @ self.mlp_up) + self.mlp_bias)
+        z = lc + (r @ self.mlp_down)
+        z = z @ self.up_proj
+        z = z.reshape(B, C, H, W)
         z = self.pre_quantization_conv(z)
         embed_loss, z_q, perp, _, _ = self.vector_quantization(z)
         return embed_loss, self.decoder(z_q), perp, lc
@@ -340,7 +325,7 @@ if __name__ == '__main__':
     _outer_model = VQVAE(**config['outer'])
     _inner_model = TSVAE(**config['inner'])
     _model = BigModel(_outer_model, _inner_model)
-    summary(_model, device=device, depth=4, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
+    summary(_model, device=device, depth=8, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
     _model.to(memory_format=torch.channels_last)
     model = torch.compile(_model, **config['compile'])
 
@@ -368,9 +353,6 @@ if __name__ == '__main__':
     while e < num_epochs:
         wandb.log({'epoch': e})
         try:
-            for batch_idx, batch in tqdm(islice(enumerate(dataset), 50000), total=50000, desc='warmup'):
-                warmup_vqvae(batch_idx, batch)
-
             for batch_idx, batch in tqdm(enumerate(dataset), total=epoch_size, mininterval=0.5):
                 training_step(batch_idx, batch)
                 if total_idx >= 250_000:
