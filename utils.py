@@ -75,7 +75,9 @@ def unpack(batch, device) -> Tuple[Tensor, Tensor, Tensor]:
     x = x.to(device, memory_format=torch.channels_last)
     y = y.to(device, memory_format=torch.channels_last)
     t = torch.stack([t_x, t_y], dim=1).to(device)
-    return x, y, t
+    t = t.to(device)
+    t[:, 1] = t[:, 1] - t[:, 0]
+    return x, y, t[:, 1].clone()
 
 
 def download_artifact(name: str) -> Tuple[str, str]:

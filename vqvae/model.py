@@ -79,8 +79,7 @@ class VQVAE(nn.Module):
         returns:
             - latent: latent embedding
         """
-        z_e = self.encoder(x)
-        return self.pre_quantization_conv(z_e)
+        return self.encoder(x)
 
     def generate_output_from_latent(self, latent):
         """
@@ -93,6 +92,7 @@ class VQVAE(nn.Module):
             - perplexity: perplexity of the codebook usage
             - latent: input latent space
         """
-        embedding_loss, z_q, perplexity, _, _ = self.vector_quantization(latent)
+        z_pq = self.pre_quantization_conv(latent)
+        embedding_loss, z_q, perplexity, _, _ = self.vector_quantization(z_pq)
         x_hat = self.decoder(z_q)
         return embedding_loss, x_hat, perplexity, latent

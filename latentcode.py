@@ -33,6 +33,7 @@ from vqvae.blocks.quantizer import VectorQuantizer
 from vqvae.blocks.residual import ResidualStack
 from tspm.attention import AttnBlock
 from tspm.time import TimeEmbedding2D
+from losses.AdEMAMix import AdEMAMix
 
 """
 current training:
@@ -61,20 +62,23 @@ class TSVAE(nn.Module):
     the intermediate representation is in z space
     """
 
-    def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads, n_embeddings, embedding_dim, beta) -> None:
+    def __init__(self, in_dim, h_dim, res_h_dim, n_res_layers, stacks, e_dim, heads, n_embeddings, embedding_dim, beta, out_dim=None) -> None:
         super().__init__()
+        self.t_dim = 10
+        if out_dim is None:
+            out_dim = in_dim
+        self.in_dim = in_dim
+        self.out_dim = out_dim
         self.encoder = Encoder(in_dim, h_dim, n_res_layers, res_h_dim, stacks)
-        self.time_embedding = torch.nn.Parameter(_xav(torch.randn(1, 20, e_dim)), requires_grad=True)
         feat_size = int((64 / (2**stacks)) ** 2)
-        self.down_proj = nn.Parameter(_xav(torch.randn(1, feat_size, e_dim)), requires_grad=True)
-        self.mlp_up = nn.Parameter(_xav(torch.randn(1, e_dim, e_dim * 2)), requires_grad=True)
-        self.mlp_bias = nn.Parameter(_xav(torch.randn(1, h_dim, e_dim * 2)), requires_grad=True)
-        self.mlp_down = nn.Parameter(_xav(torch.randn(1, e_dim * 2, e_dim)), requires_grad=True)
-        self.up_proj = nn.Parameter(_xav(torch.randn(1, e_dim, feat_size)), requires_grad=True)
+        self.down_proj = nn.Parameter(_xav(torch.randn(1, feat_size, 1)), requires_grad=True)
+        self._bias = nn.Parameter(_xav(torch.randn(1, h_dim, 1)), requires_grad=True)
+        self.down_conv = nn.Parameter(_xav(torch.randn(self.t_dim, h_dim, 1, 1)), requires_grad=True)
+        self.up_conv = nn.Parameter(_xav(torch.randn(h_dim, self.t_dim, 1, 1)), requires_grad=True)
+        self.up_proj = nn.Parameter(_xav(torch.randn(1, 1, feat_size)), requires_grad=True)
         self.pre_quantization_conv = nn.Conv2d(h_dim, embedding_dim, kernel_size=1, stride=1)
         self.vector_quantization = VectorQuantizer(n_embeddings, embedding_dim, beta)
-        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks, in_dim)
-        self.in_dim = in_dim
+        self.decoder = Decoder(embedding_dim, h_dim, n_res_layers, res_h_dim, stacks, out_dim)
 
     def forward(self, s_x, t_xy):
         """
@@ -87,19 +91,17 @@ class TSVAE(nn.Module):
         """
         z = self.encoder(s_x)
         B, C, H, W = z.shape
-        # lc[BCE]: z[BC(HW)] @ DP[1(HW)E]
-        lc = z.view(B, C, H * W) @ self.down_proj
-        t_xy = t_xy.view(B, 1, 20).expand(-1, C, -1)
-        t_xy = t_xy @ self.time_embedding
-        # lc[BCE] & t_xy[BCE] --> q=lc, kv=t_xy
-        r = fn.scaled_dot_product_attention(lc, t_xy, t_xy)
-        r = fn.relu_((r @ self.mlp_up) + self.mlp_bias)
-        z = lc + (r @ self.mlp_down)
+        # z[BCE]: ReLU( z[BC(HW)] @ DP[1(HW)E] + b )
+        z = fn.leaky_relu((z.view(B, C, H * W) @ self.down_proj) + self._bias)
+        z = fn.conv2d(z.view(B, C, 1, 1), self.down_conv)
+        z_x = z  # timestamp latent code
+        z = z.squeeze() + t_xy.squeeze()
+        z = fn.conv2d(z.view(B, -1, 1, 1), self.up_conv)
         z = z @ self.up_proj
         z = z.reshape(B, C, H, W)
         z = self.pre_quantization_conv(z)
         embed_loss, z_q, perp, _, _ = self.vector_quantization(z)
-        return embed_loss, self.decoder(z_q), perp, lc
+        return embed_loss, self.decoder(z_q), perp, z_x
 
 
 class BigModel(nn.Module):
@@ -107,7 +109,7 @@ class BigModel(nn.Module):
         super().__init__()
         self.outer = outer
         self.inner = inner
-        self.pass_thru = nn.Conv2d(inner.in_dim * 2, inner.in_dim, 3, 1, 1)
+        self.pass_thru = nn.Conv2d(inner.out_dim * 2, inner.out_dim, 3, 1, 1)
         self.adapter = ResidualStack(inner.in_dim, inner.in_dim, 128, 8)
         for p in self.adapter.parameters():
             torch.nn.init.zeros_(p)
@@ -126,18 +128,18 @@ class BigModel(nn.Module):
             s_y: structural latent of y
         """
         s_x = self.outer.generate_latent(x)
-        embed_loss_inner, s_y, perplexity_inner, _ = self.inner(s_x, t_xy)
+        embed_loss_inner, s_y, perplexity_inner, z_x = self.inner(s_x, t_xy)
         s_x = self.adapter(s_x)
         s = self.pass_thru(torch.cat([s_x, s_y], dim=1))
         embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s)
-        return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
+        return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, z_x
 
     @torch.compile(mode='max-autotune', fullgraph=True)
     def no_pass_thru(self, x, t_xy):
         s_x = self.outer.generate_latent(x)
-        embed_loss_inner, s_y, perplexity_inner, _ = self.inner(s_x, t_xy)
+        embed_loss_inner, s_y, perplexity_inner, z_x = self.inner(s_x, t_xy)
         embed_loss_outer, y_hat, perplexity_outer, _ = self.outer.generate_output_from_latent(s_y)
-        return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, s_y
+        return y_hat, embed_loss_inner, embed_loss_outer, perplexity_inner, perplexity_outer, z_x
 
     def outer_pass(self, x):
         """
@@ -190,12 +192,13 @@ def training_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
 
     if full_train_flag:
-        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t)
+        y_hat, embed_i, embed_o, perp_i, perp_o, z_x = model(x, t)
     else:
-        y_hat, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
+        y_hat, embed_i, embed_o, perp_i, perp_o, z_x = model.no_pass_thru(x, t)
 
+    timestamp_loss = torch.pow(z_x - t, 2.0).mean()
     recon_loss = ssim_loss(y_hat, y)
-    loss = recon_loss + embed_o + embed_i
+    loss = recon_loss + embed_o + embed_i + timestamp_loss
 
     optim.zero_grad()
     loss.backward()
@@ -209,6 +212,7 @@ def training_step(batch_idx, batch):
         wandb.log(
             {
                 'train/recon_loss': recon_loss.item(),
+                'train/timestamp_loss': timestamp_loss.item(),
                 'train/perplexity': perp_o.item(),
                 'train/perplexity_inner': perp_i.item(),
                 'train/embed_loss_out': embed_o.item(),
@@ -230,18 +234,30 @@ def validation_step(batch_idx, batch):
     x, y, t = unpack(batch, device)
     with torch.no_grad():
         if full_train_flag:
-            y_hat, embed_i, embed_o, perp_i, perp_o, _ = model(x, t)
+            y_hat, embed_i, embed_o, perp_i, perp_o, z_x = model(x, t)
         else:
-            y_hat, embed_i, embed_o, perp_i, perp_o, _ = model.no_pass_thru(x, t)
+            y_hat, embed_i, embed_o, perp_i, perp_o, z_x = model.no_pass_thru(x, t)
 
+        timestamp_loss = torch.pow(z_x - t, 2.0).mean()
         recon_loss = ssim_loss(y_hat, y)
         loss = recon_loss + embed_o + embed_i
 
         psnr_x = psnr(y_hat, y)
         ssim_x = ssim(y_hat, y)
         msssim_x = ms_ssim(y_hat, y)
+    return recon_loss, perp_o, perp_i, psnr_x, ssim_x, msssim_x, timestamp_loss
 
-    return recon_loss, perp_o, perp_i, psnr_x, ssim_x, msssim_x
+
+def log_val_image(batch):
+    x, y, t = unpack(batch, device)
+    with torch.no_grad():
+        if full_train_flag:
+            y_hat, _, _, _, _, _ = model(x, t)
+        else:
+            y_hat, _, _, _, _, _ = model.no_pass_thru(x, t)
+    caption = 'x, y_hat (predicted), y'
+    mosaic = torch.cat([x, y_hat, y], dim=-1)
+    wandb.log({'val/images': [wandb.Image(img, caption=caption) for img in mosaic]})
 
 
 def warmup_vqvae(batch_idx, batch):
@@ -311,7 +327,6 @@ if __name__ == '__main__':
 
     # Hyperparameters
     batch_size = config['data']['batch_size']
-    learning_rate = config['hp']['lr'] if 'lr' in config['hp'] else 0.001
     warmup_steps = config['hp']['warmup'] if 'warmup_steps' in config['hp'] else 10000
     num_epochs = config['hp']['num_epochs'] if 'num_epochs' in config['hp'] else 5
     svd_alpha = config['hp']['svd_alpha'] if 'svd_alpha' in config['hp'] else 0.1
@@ -325,12 +340,12 @@ if __name__ == '__main__':
     _outer_model = VQVAE(**config['outer'])
     _inner_model = TSVAE(**config['inner'])
     _model = BigModel(_outer_model, _inner_model)
-    summary(_model, device=device, depth=8, input_size=((batch_size, 3, 256, 256), (batch_size, 2, 10)))
+    summary(_model, device=device, depth=4, input_size=((batch_size, 3, 256, 256), (batch_size, 1, 10)))
     _model.to(memory_format=torch.channels_last)
     model = torch.compile(_model, **config['compile'])
 
     # optim
-    optim = schedulefree.AdamWScheduleFree(_model.parameters(), lr=learning_rate, warmup_steps=warmup_steps)
+    optim = AdEMAMix(_model.parameters(), **config['optimizer'])
 
     # loss
     ssim_loss = MixReconstructionLoss()
@@ -355,7 +370,7 @@ if __name__ == '__main__':
         try:
             for batch_idx, batch in tqdm(enumerate(dataset), total=epoch_size, mininterval=0.5):
                 training_step(batch_idx, batch)
-                if total_idx >= 250_000:
+                if total_idx >= 1_500_000:
                     full_train_flag = True
                 total_idx += 1
                 if batch_idx >= epoch_size:
@@ -368,22 +383,25 @@ if __name__ == '__main__':
                     avg_psnr = 0.0
                     avg_ssim = 0.0
                     avg_ms_ssim = 0.0
+                    avg_ts_loss = 0.0
 
-                    optim.eval()
                     model.eval()
-
+                    val_idx = 0
                     for val_batch in tqdm(islice(val_dataset, VAL_BATCHES), total=VAL_BATCHES, desc='validation'):
-                        loss, perp_o, perp_i, psnr_val, ssim_val, ms_ssim_val = validation_step(batch_idx, batch)
+                        loss, perp_o, perp_i, psnr_val, ssim_val, ms_ssim_val, ts_loss_val = validation_step(val_idx, batch)
                         recon_loss += loss.item()
                         perplexity += perp_o.item()
                         perplexity_inner += perp_i.item()
                         avg_psnr += psnr_val.item()
                         avg_ssim += ssim_val.item()
                         avg_ms_ssim += ms_ssim_val.item()
+                        avg_ts_loss += ts_loss_val.item()
+                        val_idx += 1
 
                     wandb.log(
                         {
                             'val/recon_loss': recon_loss / VAL_BATCHES,
+                            'val/timestamp_loss': avg_ts_loss / VAL_BATCHES,
                             'val/perplexity': perplexity / VAL_BATCHES,
                             'val/perplexity_inner': perplexity_inner / VAL_BATCHES,
                             'val/pred_psnr': avg_psnr / VAL_BATCHES,
@@ -391,7 +409,12 @@ if __name__ == '__main__':
                             'val/pred_ms-ssim': avg_ms_ssim / VAL_BATCHES,
                         }
                     )
-                    optim.train()
+
+                    if total_idx % (val_interval * 200) == 0:
+                        # single image
+                        for val_batch in islice(val_dataset, 50, 51):
+                            log_val_image(val_batch)
+
                     model.train()
 
         except Exception as ex:  # noqa: E722

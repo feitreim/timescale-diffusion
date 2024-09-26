@@ -9,7 +9,9 @@ from torch.optim import Optimizer
 
 
 class AdEMAMix(Optimizer):
-    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999, 0.9999), eps=1e-8, weight_decay=0, alpha=5.0, T_alpha_beta3=None):
+    """by nanowell"""
+
+    def __init__(self, params, lr=1e-3, betas=(0.9, 0.999, 0.9999), eps=1e-8, weight_decay=0.0, alpha=5.0, T_alpha_beta3=None):
         if not 0.0 <= lr:
             raise ValueError(f'Invalid learning rate: {lr}')
         if not 0.0 <= eps:
