@@ -12,6 +12,7 @@ dependencies = [
 	"pytorch-lightning",
 	"einops",
 	"schedulefree",
+	"fvcore",
 	"nvidia-dali-cuda120",
 	"nvidia-nvimgcodec-cu12",
 	"nvidia-nvjpeg-cu12",
